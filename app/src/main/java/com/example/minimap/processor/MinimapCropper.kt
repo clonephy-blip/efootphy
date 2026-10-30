@@ -1,154 +1,70 @@
 package com.example.minimap.processor
 
-import android.graphics.Bitmap
-import android.graphics.Color
-import android.graphics.PointF
 import android.graphics.Rect
-import kotlin.math.hypot
+import android.media.Image
 
-data class TacticalPassLine(
-    val startX: Float,
-    val startY: Float,
-    val endX: Float,
-    val endY: Float
+// Khung dữ liệu ảnh RGBA chuẩn mà ScreenCaptureManager, FloatingOverlayService và TacticalAnalyzer đang gọi
+class RgbaFrame(
+    val width: Int,
+    val height: Int,
+    val pixels: ByteArray
 )
 
-data class MinimapAnalysisResult(
-    val homePlayers: List<PointF>,
-    val awayPlayers: List<PointF>,
-    val passSuggestions: List<TacticalPassLine>,
-    val defensiveGapWarning: Boolean
-)
+class MinimapCropper {
+    // Tái sử dụng mảng byte giữa các khung hình để không làm đầy RAM điện thoại
+    private var reusableBuffer = ByteArray(0)
 
-class MinimapCropper(
-    // Tọa độ mặc định của khung Minimap trên màn hình ngang (có thể chỉnh theo độ phân giải máy)
-    var minimapRect: Rect = Rect(760, 780, 1160, 1030)
-) {
-    private var previousHomePlayers: List<PointF> = emptyList()
+    fun crop(image: Image, roi: Rect): RgbaFrame? {
+        val planes = image.planes
+        if (planes.isEmpty()) return null
 
-    // Dải màu HSV mặc định cho chấm cầu thủ đội nhà (Xanh sáng/Trắng) và đội khách (Đỏ/Cam)
-    var homeHueRange = 180f..250f
-    var awayHueRange = 0f..30f
+        val plane = planes[0]
+        val buffer = plane.buffer
+        val rowStride = plane.rowStride
+        val pixelStride = plane.pixelStride
 
-    fun processFrame(fullScreenBitmap: Bitmap): MinimapAnalysisResult {
-        val safeRect = Rect(
-            minimapRect.left.coerceIn(0, fullScreenBitmap.width - 1),
-            minimapRect.top.coerceIn(0, fullScreenBitmap.height - 1),
-            minimapRect.right.coerceIn(1, fullScreenBitmap.width),
-            minimapRect.bottom.coerceIn(1, fullScreenBitmap.height)
-        )
+        // Giới hạn tọa độ cắt nằm an toàn trong kích thước ảnh chụp màn hình
+        val left = roi.left.coerceIn(0, (image.width - 1).coerceAtLeast(0))
+        val top = roi.top.coerceIn(0, (image.height - 1).coerceAtLeast(0))
+        val right = roi.right.coerceIn(left + 1, image.width.coerceAtLeast(1))
+        val bottom = roi.bottom.coerceIn(top + 1, image.height.coerceAtLeast(1))
 
-        val width = safeRect.width()
-        val height = safeRect.height()
-        if (width <= 10 || height <= 10) {
-            return MinimapAnalysisResult(emptyList(), emptyList(), emptyList(), false)
+        val cropW = right - left
+        val cropH = bottom - top
+        if (cropW <= 2 || cropH <= 2) return null
+
+        val requiredBytes = cropW * cropH * 4
+        if (reusableBuffer.size < requiredBytes) {
+            reusableBuffer = ByteArray(requiredBytes)
         }
 
-        val pixels = IntArray(width * height)
-        fullScreenBitmap.getPixels(pixels, 0, width, safeRect.left, safeRect.top, width, height)
-
-        val rawHomePoints = mutableListOf<PointF>()
-        val rawAwayPoints = mutableListOf<PointF>()
-        val hsv = FloatArray(3)
-
-        // Quét bước nhảy 2px để tối ưu tốc độ tuyệt đối trên điện thoại
-        for (y in 0 until height step 2) {
-            for (x in 0 until width step 2) {
-                val color = pixels[y * width + x]
-                Color.colorToHSV(color, hsv)
-                val h = hsv[0]
-                val s = hsv[1]
-                val v = hsv[2]
-
-                if (s > 0.45f && v > 0.65f) {
-                    if (h in homeHueRange) {
-                        rawHomePoints.add(PointF(x.toFloat(), y.toFloat()))
-                    } else if (h in awayHueRange || h >= 340f) {
-                        rawAwayPoints.add(PointF(x.toFloat(), y.toFloat()))
-                    }
+        // Copy siêu tốc vùng pixel của Minimap từ bộ đệm ImageReader sang mảng RGBA
+        if (pixelStride == 4) {
+            val rowBytes = cropW * 4
+            for (y in 0 until cropH) {
+                val srcPos = (top + y) * rowStride + left * 4
+                buffer.position(srcPos)
+                buffer.get(reusableBuffer, y * rowBytes, rowBytes)
+            }
+        } else {
+            var dstIdx = 0
+            for (y in 0 until cropH) {
+                var srcPos = (top + y) * rowStride + left * pixelStride
+                for (x in 0 until cropW) {
+                    reusableBuffer[dstIdx] = buffer.get(srcPos)
+                    reusableBuffer[dstIdx + 1] = buffer.get(srcPos + 1)
+                    reusableBuffer[dstIdx + 2] = buffer.get(srcPos + 2)
+                    reusableBuffer[dstIdx + 3] = buffer.get(srcPos + 3)
+                    dstIdx += 4
+                    srcPos += pixelStride
                 }
             }
         }
 
-        val homeClusters = clusterDots(rawHomePoints, radius = 8f)
-        val awayClusters = clusterDots(rawAwayPoints, radius = 8f)
-
-        val passLines = detectForwardRuns(homeClusters, awayClusters)
-        val gapWarning = detectDefensiveGap(homeClusters, width)
-
-        previousHomePlayers = homeClusters
-
-        return MinimapAnalysisResult(
-            homePlayers = homeClusters,
-            awayPlayers = awayClusters,
-            passSuggestions = passLines,
-            defensiveGapWarning = gapWarning
+        return RgbaFrame(
+            width = cropW,
+            height = cropH,
+            pixels = reusableBuffer
         )
-    }
-
-    // Gom các điểm ảnh gần nhau thành 1 tâm chấm cầu thủ duy nhất
-    private fun clusterDots(points: List<PointF>, radius: Float): List<PointF> {
-        val clusters = mutableListOf<PointF>()
-        val visited = BooleanArray(points.size)
-
-        for (i in points.indices) {
-            if (visited[i]) continue
-            var sumX = points[i].x
-            var sumY = points[i].y
-            var count = 1
-            visited[i] = true
-
-            for (j in i + 1 until points.size) {
-                if (!visited[j] && hypot(points[i].x - points[j].x, points[i].y - points[j].y) <= radius) {
-                    sumX += points[j].x
-                    sumY += points[j].y
-                    count++
-                    visited[j] = true
-                }
-            }
-            clusters.add(PointF(sumX / count, sumY / count))
-        }
-        return clusters
-    }
-
-    // Phát hiện tiền đạo bứt tốc áp sát đường việt vị (tấn công từ trái sang phải)
-    private fun detectForwardRuns(home: List<PointF>, away: List<PointF>): List<TacticalPassLine> {
-        if (previousHomePlayers.isEmpty() || away.isEmpty()) return emptyList()
-        val suggestions = mutableListOf<TacticalPassLine>()
-
-        // Tìm hậu vệ cuối cùng của đối phương (bỏ qua thủ môn ở sát biên phải)
-        val sortedAwayX = away.map { it.x }.sortedDescending()
-        val offsideLineX = if (sortedAwayX.size >= 2) sortedAwayX[1] else sortedAwayX.firstOrNull() ?: return emptyList()
-
-        for (curr in home) {
-            val prev = previousHomePlayers.minByOrNull { hypot(curr.x - it.x, curr.y - it.y) } ?: continue
-            val vx = curr.x - prev.x
-            val vy = curr.y - prev.y
-
-            // Nếu cầu thủ đang bứt tốc về phía khung thành (vx > 2.5px/frame) và nằm gần vạch việt vị
-            if (vx > 2.5f && curr.x in (offsideLineX - 35f)..(offsideLineX + 5f)) {
-                suggestions.add(
-                    TacticalPassLine(
-                        startX = minimapRect.left + curr.x,
-                        startY = minimapRect.top + curr.y,
-                        endX = minimapRect.left + curr.x + vx * 8f,
-                        endY = minimapRect.top + curr.y + vy * 8f
-                    )
-                )
-            }
-        }
-        return suggestions
-    }
-
-    // Cảnh báo khi khoảng cách giữa các hậu vệ đội nhà bị kéo giãn quá rộng
-    private fun detectDefensiveGap(home: List<PointF>, minimapWidth: Int): Boolean {
-        val defenders = home.filter { it.x < minimapWidth * 0.45f }.sortedBy { it.y }
-        if (defenders.size < 2) return false
-        for (i in 0 until defenders.size - 1) {
-            if (defenders[i + 1].y - defenders[i].y > 42f) {
-                return true
-            }
-        }
-        return false
     }
 }
