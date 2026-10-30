@@ -142,7 +142,7 @@ class FloatingOverlayService : Service() {
         }
         val arrow = if (analyzer.attackLeftToRight) "→" else "←"
         val modePrefix = if (analyzer.manualDirectionLock) "KHÓA" else "AUTO"
-        mainToggleBtn?.text = "$modePrefix$arrow"
+        mainToggleBtn?.text = "$modePrefix $arrow"
 
         if (lastScreenMode == ScreenMode.MODE_GAMEPLAN_FORMATION) {
             subActionBtn?.visibility = View.VISIBLE
@@ -501,4 +501,85 @@ class FloatingOverlayService : Service() {
                 canvas.restore()
 
                 val label = when {
-                    opt.isOffScreen ->
+                    opt.isOffScreen -> ">>> CÁNH TRỐNG (${opt.openSpacePct}%)"
+                    opt.isThroughRun -> "⚡ CHỌC KHE (${opt.openSpacePct}%)"
+                    else -> "✔ (${opt.openSpacePct}%)"
+                }
+                tagTextPaint.color = if (idx == 0) Color.rgb(167, 243, 208) else Color.YELLOW
+                canvas.drawText(label, (ex - dp(38)).coerceIn(dp(10).toFloat(), w - dp(130)), (ey - dp(16)).coerceAtLeast(dp(24).toFloat()), tagTextPaint)
+            }
+
+            res.dangerRunner3D?.let { danger ->
+                val dx = danger.x * w
+                val dy = danger.y * h
+                canvas.save()
+                canvas.scale(1f, 0.52f, dx, dy)
+                canvas.drawCircle(dx, dy, dp(28).toFloat(), dangerRingPaint)
+                canvas.restore()
+                tagTextPaint.color = Color.rgb(255, 100, 100)
+                canvas.drawText("⚠ BỌC LÓT!", dx - dp(32), dy - dp(18), tagTextPaint)
+            }
+        }
+
+        private fun drawAutoFormationScanner(
+            canvas: Canvas,
+            w: Float,
+            h: Float,
+            report: AutoFormationAnalysis
+        ) {
+            if (report.isWaitingForOpponentView) {
+                cardRect.set(w * 0.22f, dp(10).toFloat(), w * 0.78f, dp(52).toFloat())
+                canvas.drawRoundRect(cardRect, dp(10).toFloat(), dp(10).toFloat(), modalBgPaint)
+                canvas.drawRoundRect(cardRect, dp(10).toFloat(), dp(10).toFloat(), footRingPaint)
+                tagTextPaint.color = Color.CYAN
+                canvas.drawText(
+                    "👁 MẢNG 1 TỰ ĐỘNG: Hãy bấm xem Sơ đồ Đối thủ 1 giây để AI quét tử huyệt!",
+                    cardRect.left + dp(14),
+                    cardRect.centerY() + dp(5),
+                    tagTextPaint
+                )
+                return
+            }
+
+            for (card in report.detectedPlayerCards) {
+                canvas.drawCircle(card.x * w, card.y * h, dp(14).toFloat(), footRingPaint)
+            }
+
+            for (weak in report.weakZoneSpots) {
+                val wx = weak.x * w
+                val wy = weak.y * h
+                canvas.drawCircle(wx, wy, dp(40).toFloat(), dangerRingPaint)
+                tagTextPaint.color = Color.YELLOW
+                canvas.drawText("🎯 KHOÉT VÙNG NÀY", wx - dp(52), wy + dp(5), tagTextPaint)
+            }
+
+            cardRect.set(w * 0.18f, dp(10).toFloat(), w * 0.86f, dp(105).toFloat())
+            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), modalBgPaint)
+            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), throughLaserPaint)
+
+            var ty = cardRect.top + dp(24)
+            val lx = cardRect.left + dp(14)
+
+            tagTextPaint.color = Color.rgb(56, 189, 248)
+            canvas.drawText("🤖 SƠ ĐỒ ĐỐI THỦ: ${report.detectedFormation}", lx, ty, tagTextPaint)
+
+            ty += dp(22)
+            tagTextPaint.color = Color.rgb(250, 204, 21)
+            canvas.drawText("🔥 TỬ HUYỆT: ${report.tacticalWeakness}", lx, ty, tagTextPaint)
+
+            ty += dp(22)
+            tagTextPaint.color = Color.WHITE
+            canvas.drawText("💡 ${report.actionableAdvice}", lx, ty, tagTextPaint)
+        }
+
+        private fun drawCleanArrow(canvas: Canvas, sx: Float, sy: Float, ex: Float, ey: Float, paint: Paint) {
+            canvas.drawLine(sx, sy, ex, ey, paint)
+            val angle = atan2((ey - sy).toDouble(), (ex - sx).toDouble())
+            val head = dp(11).toFloat()
+            val a1 = angle - Math.PI / 6
+            val a2 = angle + Math.PI / 6
+            canvas.drawLine(ex, ey, (ex - head * cos(a1)).toFloat(), (ey - head * sin(a1)).toFloat(), paint)
+            canvas.drawLine(ex, ey, (ex - head * cos(a2)).toFloat(), (ey - head * sin(a2)).toFloat(), paint)
+        }
+    }
+}
