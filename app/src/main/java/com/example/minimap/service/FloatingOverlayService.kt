@@ -79,6 +79,8 @@ class FloatingOverlayService : Service() {
 
     private var captureActive = false
     private var destroyed = false
+    @Volatile private var lastLaidOutRoi: CropRegion? = null
+    @Volatile private var roiBlockedByPod = false
     private var lastDisplayedDirection: Boolean? = null
     private var lastScreenMode: Int = ScreenMode.MODE_LIVE_MATCH
 
@@ -101,7 +103,24 @@ class FloatingOverlayService : Service() {
                     (height * region.bottom).toInt()
                 )
             },
-            onFrame = { frame ->
+            onFrame = frameCallback@ { frame ->
+                val currentRoi=roi
+                if(lastLaidOutRoi!=currentRoi) {
+                    latestFrameResult.set(null)
+                    mainHandler.post {
+                        if(!destroyed) controlPod?.let { pod ->
+                            val layout=pod.layoutParams as WindowManager.LayoutParams
+                            clampPod(layout)
+                            windows.updateViewLayout(pod,layout)
+                            lastLaidOutRoi=currentRoi
+                        }
+                    }
+                    return@frameCallback
+                }
+                if(roiBlockedByPod) {
+                    latestFrameResult.set(null)
+                    return@frameCallback
+                }
                 val result = analyzer.analyze(frame)
                 latestFrameResult.set(result)
                 drawingLayer?.postInvalidateOnAnimation()
@@ -295,7 +314,13 @@ class FloatingOverlayService : Service() {
                 else -> false
             }
         }
+        clampPod(lp)
         windows.addView(pod, lp)
+        pod.post {
+            if(!destroyed && pod.isAttachedToWindow) {
+                clampPod(lp);windows.updateViewLayout(pod,lp);lastLaidOutRoi=roi
+            }
+        }
     }
 
     private fun params(width: Int, height: Int, flags: Int) = WindowManager.LayoutParams(
@@ -317,9 +342,19 @@ class FloatingOverlayService : Service() {
         val region=roi
         val sourceRoi = Rect((size.x * region.left).toInt(), (size.y * region.top).toInt(),
             (size.x * region.right).toInt(), (size.y * region.bottom).toInt())
-        if (Rect.intersects(Rect(lp.x, lp.y, lp.x + podWidth, lp.y + podHeight), sourceRoi)) {
-            lp.y = (sourceRoi.top - podHeight - dp(8)).coerceAtLeast(0)
+        fun overlaps()=Rect.intersects(Rect(lp.x,lp.y,lp.x+podWidth,lp.y+podHeight),sourceRoi)
+        if(overlaps()) {
+            for(corner in 0..3) {
+                lp.x=if(corner%2==0) 0 else (size.x-podWidth).coerceAtLeast(0)
+                lp.y=if(corner<2) 0 else (size.y-podHeight).coerceAtLeast(0)
+                if(!overlaps()) break
+            }
         }
+        val blocked=overlaps()
+        if(blocked && !roiBlockedByPod) {
+            Toast.makeText(this,"Vùng radar bị cửa sổ che; hãy thu nhỏ vùng chọn.",Toast.LENGTH_LONG).show()
+        }
+        roiBlockedByPod=blocked
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -398,10 +433,24 @@ class FloatingOverlayService : Service() {
             paint.style=Paint.Style.STROKE;paint.strokeWidth=dp(1).toFloat();paint.color=Color.CYAN
             val gap=dp(3).toFloat()
             canvas.drawRect(source.left-gap,source.top-gap,source.right+gap,source.bottom+gap,paint)
-            // All detections are shown in a separate helper radar, never on the source minimap.
+            // Relocate the helper when the user chooses a source ROI in another corner.
             val pw=minOf(dp(190).toFloat(),w*.28f)
             val ph=pw*.60f
-            panel.set(dp(10).toFloat(),dp(48).toFloat(),dp(10)+pw,dp(48)+ph)
+            var fits=false
+            val margin=dp(10).toFloat()
+            for(corner in 0..3) {
+                val x=if(corner%2==0) margin else w-margin-pw
+                val y=if(corner<2) dp(48).toFloat() else h-margin-ph
+                panel.set(x,y,x+pw,y+ph)
+                if(panel.left>=0 && panel.top>=0 && panel.right<=w && panel.bottom<=h &&
+                    (panel.right+gap<source.left || panel.left-gap>source.right ||
+                        panel.bottom+gap<source.top || panel.top-gap>source.bottom)) {
+                    fits=true;break
+                }
+            }
+            if(!fits || roiBlockedByPod) return
+            val savedCanvas=canvas.save()
+            canvas.clipRect(panel)
             paint.style=Paint.Style.FILL;paint.color=Color.rgb(15,23,42)
             canvas.drawRoundRect(panel,dp(8).toFloat(),dp(8).toFloat(),paint)
             paint.style=Paint.Style.STROKE;paint.color=Color.rgb(80,120,100);paint.strokeWidth=dp(1).toFloat()
@@ -430,6 +479,7 @@ class FloatingOverlayService : Service() {
                 paint.color=if(marker.label==0) Color.YELLOW else Color.CYAN
                 canvas.drawCircle(x,y,dp(4).toFloat(),paint)
             }
+            canvas.restoreToCount(savedCanvas)
         }
 
         override fun onDetachedFromWindow() {

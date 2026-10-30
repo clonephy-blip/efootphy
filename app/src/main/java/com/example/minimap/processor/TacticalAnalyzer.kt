@@ -82,7 +82,7 @@ class TacticalAnalyzer(context: Context): AutoCloseable {
         val world=fusion.update(FusionInput(frame.timestampNs,epoch,Scene.LIVE,observations,
             modelsValidated=false))
         // Full-pitch/landmark models and independent device QC are required before enabling AR advice.
-        return result(if(playerBoxes.isEmpty()) "Kiểm tra vùng radar" else "Đã thấy ${playerBoxes.size} chấm · đang hiệu chỉnh",world,detections)
+        return result(if(playerBoxes.isEmpty()) "Kiểm tra vùng radar" else "${playerBoxes.size} ứng viên · kiểm tra",world,detections)
     }
 
     override fun close() { reset() }
