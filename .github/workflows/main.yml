@@ -1,0 +1,33 @@
+name: Build APK Without Wrapper
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Tải mã nguồn
+        uses: actions/checkout@v4
+
+      - name: 2. Cài đặt Java 17 (Khớp với build.gradle.kts)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 3. Cài đặt trực tiếp Gradle 8.9 (Bỏ qua lỗi thiếu gradlew trong zip)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: 4. Biên dịch ra file APK
+        run: gradle assembleDebug
+
+      - name: 5. Đóng gói file APK để tải về
+        uses: actions/upload-artifact@v4
+        with:
+          name: eFootball-Minimap-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
