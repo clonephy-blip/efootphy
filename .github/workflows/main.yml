@@ -1,4 +1,4 @@
-name: Build APK Without Wrapper
+name: Build APK Fixed
 
 on:
   push:
@@ -7,27 +7,43 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Ghim cố định ubuntu-24.04 (có sẵn Android SDK ổn định, tránh lỗi Ubuntu 26 mới cập nhật)
+    runs-on: ubuntu-24.04
+
     steps:
       - name: 1. Tải mã nguồn
         uses: actions/checkout@v4
 
-      - name: 2. Cài đặt Java 17 (Khớp với build.gradle.kts)
-        uses: actions/setup-java@v4
+      - name: 2. Cài đặt Java 17 (Đã nâng lên v5 theo yêu cầu của GitHub)
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 3. Cài đặt trực tiếp Gradle 8.9 (Bỏ qua lỗi thiếu gradlew trong zip)
+      - name: 3. Cấp quyền Android SDK 35
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: 4. Cài đặt Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: 4. Biên dịch ra file APK
-        run: gradle assembleDebug
+      - name: 5. Tự động tìm đúng thư mục chứa code và Build APK
+        run: |
+          if [ -f "settings.gradle.kts" ]; then
+            gradle assembleDebug --stacktrace
+          elif [ -f "efootball-minimap-assistant/settings.gradle.kts" ]; then
+            cd efootball-minimap-assistant
+            gradle assembleDebug --stacktrace
+          else
+            echo "Không tìm thấy file settings.gradle.kts!"
+            ls -la
+            exit 1
+          fi
 
-      - name: 5. Đóng gói file APK để tải về
+      - name: 6. Xuất file APK để tải về
         uses: actions/upload-artifact@v4
         with:
           name: eFootball-Minimap-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: "**/app/build/outputs/apk/debug/app-debug.apk"
