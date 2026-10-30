@@ -21,6 +21,7 @@ import android.view.Display
 import android.view.WindowManager
 import com.example.minimap.processor.MinimapCropper
 import com.example.minimap.processor.RgbaFrame
+import com.efootphy.vision.Timing
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -31,24 +32,24 @@ class ScreenCaptureManager(
     private val onFrame: (RgbaFrame) -> Unit,
     private val onState: (Boolean) -> Unit,
     private val onError: (Throwable) -> Unit,
-    scanFps: Int = 60,
-    private val maxCaptureSide: Int = 960
+    scanFps: Int = 15,
+    private val maxCaptureSide: Int = 1280,
+    private val onSessionReset: () -> Unit = {}
 ) : AutoCloseable {
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
 
-    // Nâng cấp 1: Đặt độ ưu tiên luồng ở mức URGENT_DISPLAY (-8) để ngang hàng với bộ dựng hình GPU 60FPS của game
+    // Keep analysis below the game's display-priority work; profile on the actual device.
     private val thread = HandlerThread(
-        "efootball-realtime-60fps",
-        Process.THREAD_PRIORITY_URGENT_DISPLAY
+        "efootball-perception",
+        Process.THREAD_PRIORITY_DEFAULT
     ).apply { start() }
 
     private val worker = Handler(thread.looper)
     private val displays = requireNotNull(app.getSystemService(DisplayManager::class.java))
     private val cropper = MinimapCropper()
 
-    // Nâng cấp 2: Đặt khoảng cách nhận frame có dung sai 15% (13.8ms cho 60FPS) để KHÔNG BAO GIỜ bị rớt nhịp VSYNC 16.6ms
-    private val frameIntervalNs = (830_000_000L / scanFps.coerceIn(15, 90))
+    private val frameIntervalNs = Timing.intervalNs(scanFps)
 
     // Khóa chống nghẽn cổ chai (Backpressure Drop): Nếu frame trước chưa vẽ xong thì bỏ qua ngay, chỉ lấy frame MỚI NHẤT
     private val isProcessingFrame = AtomicBoolean(false)
@@ -97,7 +98,7 @@ class ScreenCaptureManager(
                 val output = newReader(scaled.x, scaled.y)
                 reader = output
                 virtualDisplay = session.createVirtualDisplay(
-                    "RealTime60FpsCapture", scaled.x, scaled.y, densityDpi,
+                    "efootball-capture", scaled.x, scaled.y, densityDpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     output.surface, null, worker
                 )
@@ -115,7 +116,7 @@ class ScreenCaptureManager(
     }
 
     private fun newReader(width: Int, height: Int): ImageReader =
-        ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2).apply {
+        ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3).apply {
             setOnImageAvailableListener({ source ->
                 if (source !== reader || closed) return@setOnImageAvailableListener
                 val image = try {
@@ -213,14 +214,19 @@ class ScreenCaptureManager(
         if (stopProjection) old?.stop()
         lastFrameNs = 0L
         isProcessingFrame.set(false)
+        onSessionReset()
         main.post { if (!closed) onState(false) }
     }
 
-    override fun close() {
+    override fun close() = close {}
+
+    fun close(onClosed: () -> Unit) {
+        if(closed) return
         closed = true
         worker.post {
-            release()
-            thread.quitSafely()
+            try { release() } finally {
+                try { onClosed() } finally { thread.quitSafely() }
+            }
         }
     }
 }

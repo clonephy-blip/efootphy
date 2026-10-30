@@ -2,6 +2,7 @@ package com.example.minimap.processor
 
 import android.graphics.Rect
 import android.media.Image
+import android.os.SystemClock
 
 object ScreenMode {
     const val MODE_UNKNOWN_OR_MENU = 0
@@ -14,20 +15,18 @@ class RgbaFrame(
     val height: Int,
     val pixels: ByteArray,
     val timestampNs: Long = 0L,
-    val screenMode: Int = ScreenMode.MODE_LIVE_MATCH,
-    val controlled3DX: Float = -1f, // Tọa độ X (0..1) bàn chân cầu thủ đang cầm bóng trên Sân 3D
-    val controlled3DY: Float = -1f, // Tọa độ Y (0..1) bàn chân cầu thủ đang cầm bóng trên Sân 3D
-    val gridW: Int = 0,
-    val gridH: Int = 0,
-    val gridPixels: ByteArray = ByteArray(0)
+    val screenMode: Int = ScreenMode.MODE_UNKNOWN_OR_MENU,
+    val roiLeft: Int = 0,
+    val roiTop: Int = 0,
+    val captureWidth: Int = 0,
+    val captureHeight: Int = 0
 )
 
 class MinimapCropper {
     private var minimapBuffer = ByteArray(0)
-    private var gridBuffer = ByteArray(0)
 
     // Giữ tương thích ngược nếu nơi nào gọi hàm 2 tham số
-    fun crop(image: Image, roi: Rect): RgbaFrame? = crop(image, roi, System.nanoTime())
+    fun crop(image: Image, roi: Rect): RgbaFrame? = crop(image, roi, SystemClock.elapsedRealtimeNanos())
 
     fun crop(image: Image, roi: Rect, timestampNs: Long): RgbaFrame? {
         val planes = image.planes
@@ -39,7 +38,7 @@ class MinimapCropper {
         val pixelStride = plane.pixelStride
         val imgW = image.width
         val imgH = image.height
-        if (imgW <= 32 || imgH <= 32) return null
+        if (imgW <= 32 || imgH <= 32 || pixelStride < 4) return null
 
         // 1. Cắt vùng Minimap độ nét gốc
         val left = roi.left.coerceIn(0, imgW - 2)
@@ -76,46 +75,23 @@ class MinimapCropper {
             }
         }
 
-        // 2. Quét lưới toàn màn hình 3D (Step = 4) trong 0.3ms để:
-        //    (a) Bắt thanh tên Xanh Ngọc (Neon Cyan) trên đầu cầu thủ đang điều khiển trên sân 3D
-        //    (b) Tự động phân biệt đang Đá trong trận (LIVE_MATCH) hay đang mở Sơ đồ chiến thuật (GAMEPLAN)
+        // 2. Coarse scene sampling; runtime must be measured on the target device.
+        // This heuristic is only a research scene gate, not a validated classifier.
         val step = 4
         val gW = imgW / step
         val gH = imgH / step
-        val neededGrid = gW * gH * 4
-        if (gridBuffer.size < neededGrid) {
-            gridBuffer = ByteArray(neededGrid)
-        }
-
-        var sumCyanX = 0f
-        var sumCyanY = 0f
-        var cyanCount = 0
-
         var pitchGrassPixels = 0
         var leftSidebarDarkBluePixels = 0
         var formationPitchGreenPixels = 0
 
-        val pitchMinY = (gH * 0.12f).toInt()
-        val pitchMaxY = (gH * 0.76f).toInt()
-        val pitchMinX = (gW * 0.08f).toInt()
-        val pitchMaxX = (gW * 0.92f).toInt()
-
-        var gIdx = 0
         for (gy in 0 until gH) {
             val rowStart = (gy * step) * rowStride
-            val in3DPlayAreaY = gy in pitchMinY..pitchMaxY
 
             for (gx in 0 until gW) {
                 val pPos = rowStart + (gx * step) * pixelStride
                 val r = buffer.get(pPos).toInt() and 0xFF
                 val g = buffer.get(pPos + 1).toInt() and 0xFF
                 val b = buffer.get(pPos + 2).toInt() and 0xFF
-
-                gridBuffer[gIdx] = r.toByte()
-                gridBuffer[gIdx + 1] = g.toByte()
-                gridBuffer[gIdx + 2] = b.toByte()
-                gridBuffer[gIdx + 3] = -1
-                gIdx += 4
 
                 // Kiểm tra màu cỏ trên sân
                 if (g > r + 14 && g > b + 18 && g in 55..190) {
@@ -130,23 +106,7 @@ class MinimapCropper {
                     leftSidebarDarkBluePixels++
                 }
 
-                // Bắt thanh thể lực & con trỏ Xanh Ngọc (Neon Cyan) trên đầu cầu thủ đang điều khiển trên sân 3D
-                if (in3DPlayAreaY && gx in pitchMinX..pitchMaxX) {
-                    if (g > 212 && b > 202 && r < 72) {
-                        sumCyanX += gx.toFloat() / gW
-                        sumCyanY += gy.toFloat() / gH
-                        cyanCount++
-                    }
-                }
             }
-        }
-
-        // Xác định tọa độ bàn chân cầu thủ đang cầm bóng trên mặt cỏ 3D (nằm dưới thanh tên khoảng 8.2% chiều cao màn hình)
-        var foot3DX = -1f
-        var foot3DY = -1f
-        if (cyanCount >= 2) {
-            foot3DX = (sumCyanX / cyanCount).coerceIn(0.05f, 0.95f)
-            foot3DY = ((sumCyanY / cyanCount) + 0.082f).coerceIn(0.15f, 0.88f)
         }
 
         // Nhận diện tự động Trạng thái Màn hình
@@ -172,11 +132,10 @@ class MinimapCropper {
             pixels = minimapBuffer,
             timestampNs = timestampNs,
             screenMode = detectedMode,
-            controlled3DX = foot3DX,
-            controlled3DY = foot3DY,
-            gridW = gW,
-            gridH = gH,
-            gridPixels = gridBuffer
+            roiLeft = left,
+            roiTop = top,
+            captureWidth = imgW,
+            captureHeight = imgH
         )
     }
 }

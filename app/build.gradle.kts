@@ -10,8 +10,8 @@ android {
         applicationId = "com.example.minimap"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0-research"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -23,4 +23,6 @@ android {
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
+    implementation(project(":vision-core"))
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 }

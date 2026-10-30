@@ -1,0 +1,15 @@
+.gradle/
+**/build/
+local.properties
+source_snapshot.json
+__pycache__/
+*.pyc
+.venv/
+qc-local/
+datasets/
+training-runs/
+*.pt
+*.onnx
+*.tflite
+*.mp4
+*.keystore

@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "eFootball Minimap Assistant"
-include(":app")
+include(":app", ":vision-core")
