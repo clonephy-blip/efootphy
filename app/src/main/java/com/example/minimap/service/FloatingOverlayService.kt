@@ -13,7 +13,6 @@ import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -34,18 +33,19 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import com.example.minimap.processor.AutoFormationAnalysis
+import com.efootphy.vision.CropRegion
+import com.efootphy.vision.Timing
+import com.efootphy.vision.TrackStatus
+import android.os.SystemClock
 import com.example.minimap.processor.ScreenMode
 import com.example.minimap.processor.TacticalAnalyzer
 import com.example.minimap.processor.TacticalResult
 import com.example.minimap.ui.CaptureConsentActivity
+import com.example.minimap.BuildConfig
 import com.example.minimap.ui.MainActivity
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cos
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
 class FloatingOverlayService : Service() {
     companion object {
@@ -57,44 +57,48 @@ class FloatingOverlayService : Service() {
         private const val CHANNEL = "minimap_assistant"
         private const val NOTIFICATION_ID = 1001
 
-        @Volatile var roiLeftRatio = 0.436f
-        @Volatile var roiTopRatio = 0.795f
-        @Volatile var roiRightRatio = 0.564f
-        @Volatile var roiBottomRatio = 0.948f
+        @Volatile var roi = CropRegion.DEFAULT
+
+        fun loadRoi(context: Context) {
+            val saved=context.getSharedPreferences("roi",Context.MODE_PRIVATE)
+            roi=CropRegion.restore(saved.getFloat("left",roi.left),saved.getFloat("top",roi.top),
+                saved.getFloat("right",roi.right),saved.getFloat("bottom",roi.bottom))
+        }
     }
 
     private lateinit var windows: WindowManager
     private lateinit var capture: ScreenCaptureManager
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val analyzer = TacticalAnalyzer()
+    private lateinit var analyzer: TacticalAnalyzer
 
     private val latestFrameResult = AtomicReference<TacticalResult?>(null)
 
     private var controlPod: LinearLayout? = null
     private var mainToggleBtn: TextView? = null
-    private var subActionBtn: TextView? = null
     private var drawingLayer: RealTimeArHudView? = null
 
     private var captureActive = false
     private var destroyed = false
     private var lastDisplayedDirection: Boolean? = null
     private var lastScreenMode: Int = ScreenMode.MODE_LIVE_MATCH
-    @Volatile private var hideFormationOverlayManually = false
 
     override fun onCreate() {
         super.onCreate()
+        analyzer = TacticalAnalyzer(this)
+        loadRoi(this)
         windows = requireNotNull(getSystemService(WindowManager::class.java))
         requireNotNull(getSystemService(NotificationManager::class.java)).createNotificationChannel(
-            NotificationChannel(CHANNEL, "eFootball RealTime 60FPS", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL, "eFootball Assistant", NotificationManager.IMPORTANCE_LOW)
         )
         capture = ScreenCaptureManager(
             context = this,
             roiProvider = { width, height ->
+                val region=roi
                 Rect(
-                    (width * roiLeftRatio).toInt(),
-                    (height * roiTopRatio).toInt(),
-                    (width * roiRightRatio).toInt(),
-                    (height * roiBottomRatio).toInt()
+                    (width * region.left).toInt(),
+                    (height * region.top).toInt(),
+                    (width * region.right).toInt(),
+                    (height * region.bottom).toInt()
                 )
             },
             onFrame = { frame ->
@@ -105,9 +109,6 @@ class FloatingOverlayService : Service() {
                 if (result.attackLeftToRight != lastDisplayedDirection || result.screenMode != lastScreenMode) {
                     lastDisplayedDirection = result.attackLeftToRight
                     lastScreenMode = result.screenMode
-                    if (result.screenMode == ScreenMode.MODE_LIVE_MATCH) {
-                        hideFormationOverlayManually = false
-                    }
                     mainHandler.post {
                         if (!destroyed && captureActive) {
                             updatePodLabels()
@@ -128,28 +129,22 @@ class FloatingOverlayService : Service() {
             },
             onError = { error ->
                 Log.e("Minimap", "Capture error", error)
-                Toast.makeText(this, "Chạm nút AR để cấp lại quyền màn hình.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Chạm BẬT QUÉT để cấp lại quyền màn hình.", Toast.LENGTH_SHORT).show()
             },
-            scanFps = 60
+            scanFps = 15,
+            onSessionReset = { analyzer.reset() }
         )
     }
 
     private fun updatePodLabels() {
         if (!captureActive) {
-            mainToggleBtn?.text = "BẬT 60FPS"
-            subActionBtn?.visibility = View.GONE
+            mainToggleBtn?.text = "BẬT QUÉT"
             return
         }
         val arrow = if (analyzer.attackLeftToRight) "→" else "←"
-        val modePrefix = if (analyzer.manualDirectionLock) "KHÓA" else "AUTO"
+        val modePrefix = if (analyzer.manualDirectionLock) "HƯỚNG" else "QUÉT"
         mainToggleBtn?.text = "$modePrefix $arrow"
 
-        if (lastScreenMode == ScreenMode.MODE_GAMEPLAN_FORMATION) {
-            subActionBtn?.visibility = View.VISIBLE
-            subActionBtn?.text = if (hideFormationOverlayManually) "👁 HIỆN SƠ ĐỒ" else "✖ ẨN SƠ ĐỒ"
-        } else {
-            subActionBtn?.visibility = View.GONE
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -211,7 +206,7 @@ class FloatingOverlayService : Service() {
         }
 
         val btnMain = TextView(this).apply {
-            text = "BẬT 60FPS"
+            text = "BẬT QUÉT"
             gravity = Gravity.CENTER
             textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
@@ -241,32 +236,7 @@ class FloatingOverlayService : Service() {
         }
         mainToggleBtn = btnMain
 
-        val btnSub = TextView(this).apply {
-            text = "✖ ẨN SƠ ĐỒ"
-            gravity = Gravity.CENTER
-            textSize = 10f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.BLACK)
-            visibility = View.GONE
-            setPadding(dp(6), dp(5), dp(6), dp(5))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(8).toFloat()
-                setColor(Color.rgb(250, 204, 21))
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(4) }
-            setOnClickListener {
-                hideFormationOverlayManually = !hideFormationOverlayManually
-                updatePodLabels()
-                drawingLayer?.postInvalidateOnAnimation()
-            }
-        }
-        subActionBtn = btnSub
-
         pod.addView(btnMain)
-        pod.addView(btnSub)
         controlPod = pod
 
         val lp = params(
@@ -342,6 +312,14 @@ class FloatingOverlayService : Service() {
         } else windows.defaultDisplay.getSize(size)
         lp.x = lp.x.coerceIn(0, (size.x - dp(75)).coerceAtLeast(0))
         lp.y = lp.y.coerceIn(0, (size.y - dp(85)).coerceAtLeast(0))
+        val podWidth = controlPod?.width?.takeIf { it > 0 } ?: dp(96)
+        val podHeight = controlPod?.height?.takeIf { it > 0 } ?: dp(85)
+        val region=roi
+        val sourceRoi = Rect((size.x * region.left).toInt(), (size.y * region.top).toInt(),
+            (size.x * region.right).toInt(), (size.y * region.bottom).toInt())
+        if (Rect.intersects(Rect(lp.x, lp.y, lp.x + podWidth, lp.y + podHeight), sourceRoi)) {
+            lp.y = (sourceRoi.top - podHeight - dp(8)).coerceAtLeast(0)
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -365,8 +343,8 @@ class FloatingOverlayService : Service() {
         )
         val notification = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setContentTitle("eFootball RealTime 60FPS Vision")
-            .setContentText(if (projecting) "Đang đồng bộ 60/60 FPS" else "Sẵn sàng")
+            .setContentTitle("eFootball Assistant · nghiên cứu")
+            .setContentText(if (projecting) "Đang đọc radar · tối đa 15 lần/giây" else "Sẵn sàng")
             .setContentIntent(open).setOngoing(true)
             .addAction(Notification.Action.Builder(null, "Dừng", stop).build())
             .build()
@@ -384,7 +362,8 @@ class FloatingOverlayService : Service() {
 
     override fun onDestroy() {
         destroyed = true
-        capture.close()
+        mainHandler.removeCallbacksAndMessages(null)
+        capture.close { analyzer.close() }
         listOfNotNull(controlPod, drawingLayer).forEach {
             if (it.isAttachedToWindow) windows.removeView(it)
         }
@@ -395,191 +374,67 @@ class FloatingOverlayService : Service() {
     }
 
     private inner class RealTimeArHudView(context: Context) : View(context) {
-        private val roiRect = RectF()
-        private val cardRect = RectF()
-
-        private val footRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(2).toFloat()
-            color = Color.CYAN
+        private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
+        private val textPaint=Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize=dp(11).toFloat();color=Color.WHITE;typeface=Typeface.DEFAULT_BOLD
         }
-        private val throughLaserPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(3).toFloat()
-            color = Color.rgb(0, 255, 128)
-        }
-        private val safePassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(2).toFloat()
-            color = Color.rgb(250, 204, 21)
-            pathEffect = DashPathEffect(floatArrayOf(14f, 8f), 0f)
-        }
-        private val landingZoneFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = Color.argb(70, 0, 255, 128)
-        }
-        private val dangerRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(3).toFloat()
-            color = Color.rgb(255, 55, 55)
-        }
-        private val minimapFramePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(1).toFloat()
-            color = Color.argb(130, 56, 189, 248)
-        }
-        private val offsideLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(2).toFloat()
-            color = Color.YELLOW
-            pathEffect = DashPathEffect(floatArrayOf(8f, 6f), 0f)
-        }
-        private val tagTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = dp(12).toFloat()
-            color = Color.WHITE
-            typeface = Typeface.DEFAULT_BOLD
-            setShadowLayer(4f, 0f, 0f, Color.BLACK)
-        }
-        private val modalBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = Color.argb(225, 15, 23, 42)
-        }
+        private val panel=RectF()
+        private val field=RectF()
+        private val source=RectF()
+        private val expire=Runnable { invalidate() }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val w = width.toFloat()
-            val h = height.toFloat()
-            if (w <= 0f || h <= 0f) return
-
-            val res = latestFrameResult.get() ?: return
-
-            if (res.screenMode == ScreenMode.MODE_GAMEPLAN_FORMATION && !hideFormationOverlayManually) {
-                res.autoFormation?.let { report ->
-                    drawAutoFormationScanner(canvas, w, h, report)
-                    return
+            removeCallbacks(expire)
+            val result=latestFrameResult.get() ?: return
+            val now=SystemClock.elapsedRealtimeNanos()
+            val lifetime=250_000_000L
+            if(!Timing.fresh(now,result.timestampNs,lifetime)) return
+            postDelayed(expire,((result.timestampNs+lifetime-now)/1_000_000L).coerceAtLeast(1L))
+            val w=width.toFloat();val h=height.toFloat()
+            // Draw the calibration outline outside the source crop to avoid capture feedback.
+            val region=roi
+            source.set(w*region.left,h*region.top,w*region.right,h*region.bottom)
+            paint.style=Paint.Style.STROKE;paint.strokeWidth=dp(1).toFloat();paint.color=Color.CYAN
+            val gap=dp(3).toFloat()
+            canvas.drawRect(source.left-gap,source.top-gap,source.right+gap,source.bottom+gap,paint)
+            // All detections are shown in a separate helper radar, never on the source minimap.
+            val pw=minOf(dp(190).toFloat(),w*.28f)
+            val ph=pw*.60f
+            panel.set(dp(10).toFloat(),dp(48).toFloat(),dp(10)+pw,dp(48)+ph)
+            paint.style=Paint.Style.FILL;paint.color=Color.rgb(15,23,42)
+            canvas.drawRoundRect(panel,dp(8).toFloat(),dp(8).toFloat(),paint)
+            paint.style=Paint.Style.STROKE;paint.color=Color.rgb(80,120,100);paint.strokeWidth=dp(1).toFloat()
+            field.set(panel.left+dp(7),panel.top+dp(22),panel.right-dp(7),panel.bottom-dp(7))
+            canvas.drawRect(field,paint)
+            canvas.drawLine(field.centerX(),field.top,field.centerX(),field.bottom,paint)
+            canvas.drawText(result.status,panel.left+dp(7),panel.top+dp(14),textPaint)
+            for(player in result.world?.players.orEmpty()) {
+                if(!player.point.inPitch()) continue
+                val x=field.left+player.point.x.toFloat()*field.width()
+                val y=field.top+player.point.y.toFloat()*field.height()
+                paint.style=Paint.Style.FILL
+                paint.color=if(player.status==TrackStatus.COASTING) Color.GRAY else Color.WHITE
+                canvas.drawCircle(x,y,dp(2).toFloat(),paint)
+                if(BuildConfig.DEBUG) {
+                    textPaint.textSize=dp(7).toFloat()
+                    canvas.drawText(player.id.toString(),x+dp(2),y-dp(2),textPaint)
+                    textPaint.textSize=dp(11).toFloat()
                 }
             }
-
-            roiRect.set(w * roiLeftRatio, h * roiTopRatio, w * roiRightRatio, h * roiBottomRatio)
-            canvas.drawRect(roiRect, minimapFramePaint)
-
-            val offX = roiRect.left + res.offsideLineX * roiRect.width()
-            canvas.drawLine(offX, roiRect.top, offX, roiRect.bottom, offsideLinePaint)
-
-            res.minimapBestPass?.let { (fromMap, toMap) ->
-                val mx1 = roiRect.left + fromMap.x * roiRect.width()
-                val my1 = roiRect.top + fromMap.y * roiRect.height()
-                val mx2 = roiRect.left + toMap.x * roiRect.width()
-                val my2 = roiRect.top + toMap.y * roiRect.height()
-                drawCleanArrow(canvas, mx1, my1, mx2, my2, throughLaserPaint)
-            }
-
-            res.controlledFoot3D?.let { foot ->
-                val fx = foot.x * w
-                val fy = foot.y * h
-                canvas.save()
-                canvas.scale(1f, 0.52f, fx, fy)
-                canvas.drawCircle(fx, fy, dp(22).toFloat(), footRingPaint)
-                canvas.restore()
-            }
-
-            res.pitch3DOptions.forEachIndexed { idx, opt ->
-                val sx = opt.from3DX * w
-                val sy = opt.from3DY * h
-                val ex = opt.to3DX * w
-                val ey = opt.to3DY * h
-
-                val paint = if (idx == 0) throughLaserPaint else safePassPaint
-                drawCleanArrow(canvas, sx, sy, ex, ey, paint)
-
-                canvas.save()
-                canvas.scale(1f, 0.52f, ex, ey)
-                if (idx == 0) {
-                    canvas.drawCircle(ex, ey, dp(26).toFloat(), landingZoneFillPaint)
-                }
-                canvas.drawCircle(ex, ey, dp(26).toFloat(), paint)
-                canvas.restore()
-
-                val label = when {
-                    opt.isOffScreen -> ">>> CÁNH TRỐNG (${opt.openSpacePct}%)"
-                    opt.isThroughRun -> "⚡ CHỌC KHE (${opt.openSpacePct}%)"
-                    else -> "✔ (${opt.openSpacePct}%)"
-                }
-                tagTextPaint.color = if (idx == 0) Color.rgb(167, 243, 208) else Color.YELLOW
-                canvas.drawText(label, (ex - dp(38)).coerceIn(dp(10).toFloat(), w - dp(130)), (ey - dp(16)).coerceAtLeast(dp(24).toFloat()), tagTextPaint)
-            }
-
-            res.dangerRunner3D?.let { danger ->
-                val dx = danger.x * w
-                val dy = danger.y * h
-                canvas.save()
-                canvas.scale(1f, 0.52f, dx, dy)
-                canvas.drawCircle(dx, dy, dp(28).toFloat(), dangerRingPaint)
-                canvas.restore()
-                tagTextPaint.color = Color.rgb(255, 100, 100)
-                canvas.drawText("⚠ BỌC LÓT!", dx - dp(32), dy - dp(18), tagTextPaint)
+            for(marker in result.detections) {
+                if(marker.label!=0 && marker.label!=1) continue
+                val x=field.left+((marker.box.left+marker.box.right)/2).toFloat()*field.width()
+                val y=field.top+((marker.box.top+marker.box.bottom)/2).toFloat()*field.height()
+                paint.style=Paint.Style.STROKE
+                paint.color=if(marker.label==0) Color.YELLOW else Color.CYAN
+                canvas.drawCircle(x,y,dp(4).toFloat(),paint)
             }
         }
 
-        private fun drawAutoFormationScanner(
-            canvas: Canvas,
-            w: Float,
-            h: Float,
-            report: AutoFormationAnalysis
-        ) {
-            if (report.isWaitingForOpponentView) {
-                cardRect.set(w * 0.22f, dp(10).toFloat(), w * 0.78f, dp(52).toFloat())
-                canvas.drawRoundRect(cardRect, dp(10).toFloat(), dp(10).toFloat(), modalBgPaint)
-                canvas.drawRoundRect(cardRect, dp(10).toFloat(), dp(10).toFloat(), footRingPaint)
-                tagTextPaint.color = Color.CYAN
-                canvas.drawText(
-                    "👁 MẢNG 1 TỰ ĐỘNG: Hãy bấm xem Sơ đồ Đối thủ 1 giây để AI quét tử huyệt!",
-                    cardRect.left + dp(14),
-                    cardRect.centerY() + dp(5),
-                    tagTextPaint
-                )
-                return
-            }
-
-            for (card in report.detectedPlayerCards) {
-                canvas.drawCircle(card.x * w, card.y * h, dp(14).toFloat(), footRingPaint)
-            }
-
-            for (weak in report.weakZoneSpots) {
-                val wx = weak.x * w
-                val wy = weak.y * h
-                canvas.drawCircle(wx, wy, dp(40).toFloat(), dangerRingPaint)
-                tagTextPaint.color = Color.YELLOW
-                canvas.drawText("🎯 KHOÉT VÙNG NÀY", wx - dp(52), wy + dp(5), tagTextPaint)
-            }
-
-            cardRect.set(w * 0.18f, dp(10).toFloat(), w * 0.86f, dp(105).toFloat())
-            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), modalBgPaint)
-            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), throughLaserPaint)
-
-            var ty = cardRect.top + dp(24)
-            val lx = cardRect.left + dp(14)
-
-            tagTextPaint.color = Color.rgb(56, 189, 248)
-            canvas.drawText("🤖 SƠ ĐỒ ĐỐI THỦ: ${report.detectedFormation}", lx, ty, tagTextPaint)
-
-            ty += dp(22)
-            tagTextPaint.color = Color.rgb(250, 204, 21)
-            canvas.drawText("🔥 TỬ HUYỆT: ${report.tacticalWeakness}", lx, ty, tagTextPaint)
-
-            ty += dp(22)
-            tagTextPaint.color = Color.WHITE
-            canvas.drawText("💡 ${report.actionableAdvice}", lx, ty, tagTextPaint)
-        }
-
-        private fun drawCleanArrow(canvas: Canvas, sx: Float, sy: Float, ex: Float, ey: Float, paint: Paint) {
-            canvas.drawLine(sx, sy, ex, ey, paint)
-            val angle = atan2((ey - sy).toDouble(), (ex - sx).toDouble())
-            val head = dp(11).toFloat()
-            val a1 = angle - Math.PI / 6
-            val a2 = angle + Math.PI / 6
-            canvas.drawLine(ex, ey, (ex - head * cos(a1)).toFloat(), (ey - head * sin(a1)).toFloat(), paint)
-            canvas.drawLine(ex, ey, (ex - head * cos(a2)).toFloat(), (ey - head * sin(a2)).toFloat(), paint)
+        override fun onDetachedFromWindow() {
+            removeCallbacks(expire)
+            super.onDetachedFromWindow()
         }
     }
 }

@@ -1,59 +1,74 @@
-name: Build eFootball AR Vision APK v4.0
+name: Vision QC and Android research APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [main, master, 'upgrade/**']
+  pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: vision-qc-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  data-tools:
     runs-on: ubuntu-24.04
-
+    timeout-minutes: 10
     steps:
-      - name: 1. Tải mã nguồn
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tools/vision_qc/requirements-qc.txt
+      - run: python -m pip install -r tools/vision_qc/requirements-qc.txt
+      - name: Dataset, normalization and release-gate regression tests
+        run: python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
 
-      - name: 2. Cài đặt Java 17
-        uses: actions/setup-java@v5
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '17'
-          distribution: 'temurin'
-
-      - name: 3. Cài đặt Android SDK 35 & Build-Tools
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: 4. Cố định chữ ký APK (Cài đè không cần gỡ bản cũ)
-        uses: actions/cache@v4
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Install Android SDK components
+        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager 'platforms;android-35' 'build-tools;35.0.0'"
+      - uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
           key: efootball-fixed-debug-keystore-v2
-
-      - name: 5. Khởi tạo Keystore nếu chưa có
+      - name: Create a debug key if the cache is unavailable
         run: |
           mkdir -p ~/.android
           if [ ! -f ~/.android/debug.keystore ]; then
-            keytool -genkey -v -keystore ~/.android/debug.keystore \
+            keytool -genkeypair -keystore ~/.android/debug.keystore \
               -storepass android -alias androiddebugkey -keypass android \
               -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+              -dname 'CN=Android Debug,O=Android,C=US'
           fi
-
-      - name: 6. Cài đặt Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: 7. Biên dịch APK v4.0 Real-Time 60FPS
-        run: |
-          if [ -d "efootball-minimap-assistant" ]; then
-            cd efootball-minimap-assistant
-          fi
-          gradle assembleDebug --stacktrace
-
-      - name: 8. Đóng gói file APK để tải về
+      - name: Core regression tests, Android lint and APK
+        run: gradle :vision-core:test :app:lintDebug :app:assembleDebug --stacktrace
+      - name: Test and lint reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: eFootball-RealTime-Vision-APK
-          path: "**/app/build/outputs/apk/debug/app-debug.apk"
+          name: vision-qc-reports
+          path: |
+            vision-core/build/reports/tests/test/
+            vision-core/build/test-results/test/
+            app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: efootphy-research-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

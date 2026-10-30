@@ -1,0 +1,2 @@
+-r requirements-qc.txt
+ultralytics==8.4.193

@@ -1,122 +1,38 @@
-# eFootball Minimap Assistant
+# eFootPhy · eFootball vision research
 
-Bộ khung Kotlin: Android 8.0+ (minSdk 26), compileSdk/targetSdk 35, JDK 17.
-Chỉ chụp màn hình và tạo dữ liệu RGBA; chưa nhận diện cầu thủ, HSV hoặc điều khiển game.
+Ứng dụng Android đọc ảnh màn hình do người dùng cho phép, nhận diện radar bằng mô hình ONNX nhập từ tệp, và hiển thị trạng thái theo dõi. Đây là bản nghiên cứu; chưa công bố độ chính xác Mobile, chưa cam kết giữ game 60 FPS và chưa mở gợi ý chuyền bóng.
 
-## Mở và chạy
+## Phần đã triển khai
 
-1. Mở thư mục này trong Android Studio, chọn Gradle 8.9 và JDK 17, cài SDK 35 rồi Sync.
-   Bộ mã nguồn không kèm Gradle Wrapper JAR/scripts. Nếu IDE yêu cầu Wrapper, dùng
-   Gradle 8.9 đã cài: `gradle wrapper --gradle-version 8.9` rồi `./gradlew assembleDebug`
-   (Windows: `gradlew.bat assembleDebug`). Các phiên bản dependency đã ghim, không khẳng định là mới nhất.
-2. Run app, bấm **Bật bubble**, cho phép hiển thị trên ứng dụng khác.
-   Quyền thông báo có thể từ chối; foreground service vẫn cần notification.
-3. Mở eFootball, kéo bubble ra ngoài vùng minimap và các nút game.
-4. Chạm bubble, cấp quyền chụp trong hộp thoại hệ thống. Android 14+ ưu tiên chụp
-   toàn màn hình để tọa độ nhất quán; resize callback vẫn xử lý kích thước thực tế.
-5. Bubble hiện ON; Logcat tag `Minimap` báo kích thước ROI mỗi 5 giây ở debug build.
-   Chạm lại để dừng projection. Chạm lần kế tiếp cần cấp quyền phiên mới.
-   Bấm **Dừng** trong thông báo hoặc MainActivity để gỡ cả bubble.
+- `app`: foreground service, MediaProjection Android 8+, bubble kéo thả, lớp vẽ xuyên chạm, chọn vùng radar, nhập gói ONNX có SHA-256 và kiểm tra tensor. Capture lấy ảnh mới nhất, giới hạn tối đa 15 lần/giây; suy luận chạy trên worker CPU một thread.
+- `vision-core`: tọa độ sân chuẩn hóa, homography/RANSAC, ghép minimap–sân bằng Hungarian một–một, theo dõi theo thời gian thực, hết hạn quan sát và khóa gợi ý khi thiếu bằng chứng. Các kiểm thử dùng dữ liệu tổng hợp có đáp án; chúng không đo chất lượng AI trên game.
+- `tools/vision_qc`: audit toàn bộ export, phát hiện nhãn lỗi/trùng/lọt nhóm video, chuyển polygon sang bbox trên bản sao, train baseline, xuất ONNX và kiểm tra sai số với PyTorch.
 
-MainActivity khởi chạy service bằng:
+**Runtime hiện kết nối mô hình minimap. Detector cầu thủ trên sân, detector 32 mốc sân, phân đội và hiệu chỉnh radar chưa được nối vào capture.** Lõi có hợp đồng nhận dữ liệu cho các nhánh này; không gọi trạng thái đó là hệ thống fusion đã kiểm chứng. Chấm radar hiện giữ đội `UNKNOWN`; nhãn `ball` của bộ minimap giữ vai trò marker, chưa được coi là quả bóng thật.
 
-```kotlin
-startForegroundService(Intent(this, FloatingOverlayService::class.java).apply {
-    action = FloatingOverlayService.ACTION_SHOW
-})
+## Chạy ứng dụng
+
+Java 17, Android SDK 35, Gradle 8.9:
+
+```bash
+gradle :vision-core:test :app:lintDebug :app:assembleDebug
 ```
 
-## Bố cục
+APK không nhúng trọng số. Nhập ZIP sinh bởi công cụ train (`model.onnx` và `manifest.json` ở gốc ZIP), cấp quyền cửa sổ nổi, bật trợ lý, chuyển sang game rồi chạm **BẬT QUÉT**. Cho phép chia sẻ **toàn màn hình**; chia sẻ riêng một app/cửa sổ chưa được hiệu chỉnh tọa độ trong bản này. Chỉnh bốn thanh vùng radar theo điện thoại. Dừng từ bubble hoặc thông báo.
 
-| File / package | Vai trò |
-| --- | --- |
-| `ui/MainActivity.kt` | Xin quyền overlay, thông báo; bật/tắt bubble |
-| `ui/CaptureConsentActivity.kt` | Activity Result API cho consent MediaProjection |
-| `service/FloatingOverlayService.kt` | Hai cửa sổ WindowManager, foreground notification, bật/tắt capture |
-| `service/ScreenCaptureManager.kt` | Projection, ImageReader, resize và cleanup trên HandlerThread |
-| `processor/MinimapCropper.kt` | Crop ROI từ Image hoặc Bitmap, xuất ByteArray RGBA liên tục |
+Các marker xuất hiện trên radar phụ; không vẽ vào vùng ảnh radar đang đọc. Lớp vẽ tự ẩn sau 250 ms khi mất kết quả. Đổi ROI/đổi phiên capture xóa trạng thái cũ. Cần kiểm tra thực tế status bar, cutout, thanh điều hướng và xoay màn hình trên từng thiết bị.
 
-## Chỉnh vùng minimap
+## Dữ liệu và huấn luyện
 
-Trong `FloatingOverlayService`, đổi `roiProvider` sang `Rect(x, y, x + width, y + height)`.
-Các số là pixel **của ảnh ImageReader sau khi scale**, gốc (0,0) ở góc trên trái,
-right/bottom không bao gồm trong vùng crop. Vùng mặc định góc dưới trái chỉ là ví dụ,
-không phải tọa độ eFootball đã đo. Cần hiệu chỉnh theo HUD, tỷ lệ màn hình và hướng máy.
+Xem [quy trình](docs/TRAINING.md), [kiến trúc và giới hạn](docs/ARCHITECTURE.md), [tiêu chuẩn QC](docs/QUALITY.md) và [audit đã thực hiện](docs/DATA_AUDIT_2026-10-30.md). Dữ liệu ảnh/video của người dùng và trọng số không đưa vào Git.
 
-Nếu đo trên màn hình gốc, với `s = min(1, 1280 / max(screenWidth, screenHeight))`,
-nhân tọa độ và kích thước với s (hoặc dùng tỷ lệ như mẫu).
-Khi xoay màn hình phải tính lại vùng ROI. Code dùng kích thước ảnh hiện tại để làm việc đó.
-
-Đường Bitmap dùng được độc lập:
-
-```kotlin
-val frame = MinimapCropper().crop(bitmap, x = 20, y = 600, width = 200, height = 120)
+```bash
+python -m pip install -r tools/vision_qc/requirements-qc.txt
+python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
 ```
 
-Trong vòng lặp, tái sử dụng một MinimapCropper. Bitmap phải là bitmap phần mềm đọc được,
-không phải `Bitmap.Config.HARDWARE`. Pipeline mặc định đọc Image trực tiếp để tránh
-tạo/copy bitmap toàn màn hình. Nó xử lý cả rowStride và pixelStride.
+GitHub Actions chạy test JVM, test công cụ dữ liệu, Android lint và build APK; báo cáo nằm trong artifacts. Kiểm thử thiết bị, video mù và hiệu năng game là các cổng riêng, chưa được CI này xác nhận.
 
-## Điểm nối OpenCV / NDK
+## Phạm vi phát hành
 
-`onFrame` chạy đồng bộ trên capture thread. `frame.pixels` là RGBA 8 bit, thứ tự
-R,G,B,A, kích thước `width * height * 4`, không có padding. Buffer được dùng lại
-ở lần crop kế tiếp: xử lý ngay tại callback; nếu chuyển cho worker khác, cần
-buffer pool/ownership riêng (hoặc copy và bounded queue có chính sách drop).
-
-Sau khi thêm và khởi tạo OpenCV, có thể dùng Java API hoặc JNI. Ví dụ bước HSV
-(minh họa, chưa đưa OpenCV vào dependency):
-
-```kotlin
-// Reuse Mat objects between frames; release them at session teardown.
-rgbaMat.create(frame.height, frame.width, CvType.CV_8UC4)
-rgbaMat.put(0, 0, frame.pixels)
-Imgproc.cvtColor(rgbaMat, rgbMat, Imgproc.COLOR_RGBA2RGB)
-Imgproc.cvtColor(rgbMat, hsvMat, Imgproc.COLOR_RGB2HSV)
-```
-
-AHardwareBuffer/ImageFormat.PRIVATE không dùng cho đường CPU crop này: PRIVATE không
-cung cấp pixel planes để đọc như RGBA. Muốn zero-copy GPU/NDK cần pipeline riêng với
-HardwareBuffer/EGL, đồng bộ fence và quản lý lifetime; bộ khung dùng RGBA để đơn giản.
-
-## Các điểm thiết kế cần giữ
-
-- Bubble **không** có FLAG_NOT_TOUCHABLE: nó cần nhận kéo/thả và click. Cửa sổ
-  trạng thái riêng có TYPE_APPLICATION_OVERLAY, FLAG_NOT_FOCUSABLE và FLAG_NOT_TOUCHABLE.
-  Window alpha = 0.7 cho cửa sổ trạng thái đơn lẻ để tuân thủ giới hạn che chạm Android 12+.
-  Phần trong bubble vẫn nhận chạm; phần ngoài bubble chuyển cho game.
-- Không có quyền runtime công khai tên `android.permission.MEDIA_PROJECTION`.
-  Consent dùng MediaProjectionManager; Android 14+ cần thêm FOREGROUND_SERVICE_MEDIA_PROJECTION.
-- Loại foreground `specialUse` giữ bubble khi chưa capture; `mediaProjection` chỉ bật
-  sau consent. Manifest khai báo subtype của specialUse. Nếu phát hành Google Play,
-  mục đích specialUse cần được duyệt; boilerplate không bảo đảm phê duyệt.
-- Mỗi token chỉ gọi getMediaProjection/createVirtualDisplay một lần. Callback đăng ký
-  trước khi tạo display. Khi xoay, resize display hiện có và đổi ImageReader surface.
-- Android 14+ dùng onCapturedContentResize; Android 8–13 dùng DisplayListener.
-- acquireLatestImage + maxImages=3 + finally image.close; không xếp hàng xử lý mọi frame.
-  Mọi xử lý ảnh chạy trên HandlerThread, không chạy trên main thread.
-- START_NOT_STICKY: process bị dừng thì người dùng mở lại app và cấp quyền mới.
-  onStop từ hệ thống (khóa màn hình, dừng chia sẻ...) giải phóng tài nguyên.
-
-## Hiệu năng và kiểm tra thực tế
-
-Mặc định cạnh dài capture <=1280 px và phân tích tối đa 15 FPS. `scanFps` là tốc độ
-phân tích, không phải tốc độ producer VirtualDisplay. Các frame bị bỏ vẫn được acquire/close.
-MediaProjection vẫn chụp khung màn hình/app đầy đủ; crop ROI giảm sao chép CPU và xử lý,
-không loại bỏ toàn bộ chi phí capture/compositor. Không cam kết game giữ 60 FPS trên mọi máy.
-Thử 10/15/20 FPS, 960/1280 px và đo frame time của game bằng Perfetto trên thiết bị đích.
-Nếu marker nhỏ bị mất sau scale, tăng maxCaptureSide và đo lại tải/nhiệt.
-
-Kiểm tra trên máy thật: bật/tắt bubble; từ chối consent; nhiều lần bật/dừng; kéo và xoay
-máy; bấm xuyên badge; khóa màn hình; dừng chia sẻ bằng UI hệ thống; thu hồi quyền overlay.
-Nội dung được bảo vệ bằng FLAG_SECURE có thể đen trong capture.
-
-Bộ nguồn đã được rà soát cấu trúc và lifecycle; môi trường tạo file không có Android SDK/
-Gradle nên chưa build APK, chạy instrumented test hay đo FPS trên thiết bị.
-
-## Tài liệu Android chính thức
-
-- https://developer.android.com/media/grow/media-projection
-- https://developer.android.com/develop/background-work/services/fgs/service-types
-- https://developer.android.com/reference/android/view/WindowManager.LayoutParams#FLAG_NOT_TOUCHABLE
-- https://developer.android.com/reference/android/media/ImageReader#acquireLatestImage()
+Không có chức năng tự điều khiển game. Không phát hành gợi ý chiến thuật trước khi qua bộ QC độc lập. Xem [nguồn và giấy phép](docs/THIRD_PARTY.md) trước khi phân phối mã/trọng số; giấy phép bộ dữ liệu không thay thế giấy phép của framework hay trọng số pretrained.
