@@ -1,0 +1,12 @@
+# Observed direct dependencies for successful Python 3.12 CPU training, not a full transitive hash lock.
+# Exact runtime versions are also recorded in each model manifest.
+# Install torch/torchvision from https://download.pytorch.org/whl/cpu before this lock.
+Pillow==12.3.0
+PyYAML==6.0.3
+ultralytics==8.4.193
+torch==2.7.1+cpu
+torchvision==0.22.1+cpu
+onnx==1.23.2
+onnxruntime==1.31.1
+numpy==2.3.5
+opencv-python-headless==5.0.0.93

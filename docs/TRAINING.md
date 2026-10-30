@@ -36,3 +36,7 @@ Cần bổ sung `groups.json` dạng `{ "train/images/file.jpg": "match_001", ..
 - `model-bundle.zip`: `model.onnx` + `manifest.json`; app hiện chỉ nhập profile minimap 320, FP32 raw `[1,7,2100]`.
 
 Không đưa output training, dữ liệu người dùng, token Roboflow hay video vào Git. Kiểm tra giấy phép của dữ liệu, pretrained weights và Ultralytics trước phân phối.
+
+Môi trường CPU đã chạy thành công được ghi ở `tools/vision_qc/requirements-train-cpu.lock.txt`; GPU dùng phiên bản torch/torchvision phù hợp máy và ghi lại phiên bản thực tế trong manifest. Các số thực đo của baseline xem `BASELINE_2026-10-30.md`.
+
+`tools/runtime_qc/OnnxParity.kt` kiểm tra cùng buffer FP32 little-endian qua Java ORT; dùng đúng phiên bản ORT trong app. So sánh này không đo Android Bitmap preprocessing hoặc tốc độ thiết bị.

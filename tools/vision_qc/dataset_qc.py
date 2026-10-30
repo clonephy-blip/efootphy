@@ -175,7 +175,7 @@ def audit(data_yaml, expected_images=None, groups_file=None, require_test=True):
     if require_test and not counts['test']:
         warnings.append({'code': 'independent_test_absent'})
     digest = hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
-    return {'task': task, 'names': names, 'decoded_images': total, 'split_counts': dict(counts),
+    return {'task': task, 'names': names, 'kpt_shape': shape, 'decoded_images': total, 'split_counts': dict(counts),
             'dimensions': dict(sizes), 'instances': dict(instances), 'polygon_rows': polygon_rows,
             'data_errors': errors, 'review_warnings': warnings, 'data_valid': not errors,
             'eligible_for_independent_evaluation': not errors and not warnings,

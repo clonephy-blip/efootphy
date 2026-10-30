@@ -1,14 +1,15 @@
 package com.efootphy.vision
 
-import kotlin.math.roundToInt
+import kotlin.math.round
 
 data class Detection(val box: Box2,val label: Int,val score: Double)
 
 class Letterbox(val width: Int,val height: Int,val target: Int) {
     init { require(width>0 && height>0 && target>0) }
     val scale=minOf(target.toDouble()/width,target.toDouble()/height)
-    val resizedWidth=(width*scale).roundToInt().coerceAtLeast(1)
-    val resizedHeight=(height*scale).roundToInt().coerceAtLeast(1)
+    // Match Python/OpenCV preprocessing: ties round to even (e.g. 62.5 -> 62).
+    val resizedWidth=round(width*scale).toInt().coerceAtLeast(1)
+    val resizedHeight=round(height*scale).toInt().coerceAtLeast(1)
     val left=(target-resizedWidth)/2
     val top=(target-resizedHeight)/2
 

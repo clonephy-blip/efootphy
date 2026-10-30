@@ -2,7 +2,7 @@ name: Vision QC and Android research APK
 
 on:
   push:
-    branches: [main, master, 'upgrade/**']
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 

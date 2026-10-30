@@ -88,6 +88,18 @@ class DatasetQcTest(unittest.TestCase):
         self.assertEqual(row,[2,.15,.25,.1,.1])
         self.assertTrue(audit(output/'data.yaml',3)['data_valid'])
 
+    def test_normalize_refuses_to_silently_drop_unlabeled_images(self):
+        self.fixture();(self.root/'train/labels/frame.txt').unlink()
+        output=self.root.parent/'normalized'
+        with self.assertRaises(ValueError):normalize_dataset(self.root,output)
+        self.assertFalse(output.exists())
+
+    def test_normalize_refuses_same_stem_with_different_image_extensions(self):
+        self.fixture()
+        with Image.open(self.root/'train/images/frame.png') as image:
+            image.save(self.root/'train/images/frame.jpg')
+        with self.assertRaises(ValueError):normalize_dataset(self.root,self.root.parent/'normalized')
+
     def test_pose_has_101_values_and_is_never_converted_as_polygon(self):
         data=self.fixture(pose=True)
         self.assertTrue(audit(data)['data_valid'])
@@ -97,6 +109,15 @@ class DatasetQcTest(unittest.TestCase):
         data=self.fixture(pose=True);label=self.root/'train/labels/frame.txt'
         row=label.read_text().split();row[-1]='1.5';label.write_text(' '.join(row))
         self.assertIn('invalid_keypoint',self.codes(audit(data)))
+
+    def test_landmark_profile_rejects_other_keypoint_schemas(self):
+        data=self.fixture(pose=True)
+        config=yaml.safe_load(data.read_text());config['kpt_shape']=[17,3]
+        data.write_text(yaml.safe_dump(config))
+        for label in self.root.glob('*/labels/*.txt'):
+            label.write_text(' '.join(label.read_text().split()[:56]))
+        self.assertTrue(audit(data)['data_valid'])
+        with self.assertRaises(ValueError):preflight(data,3,None,'landmarks',True)
 
     def test_missing_test_and_video_groups_do_not_claim_independent_evaluation(self):
         result=audit(self.fixture(test=False))

@@ -4,6 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DetectionTest {
+    @Test fun resizeRoundingMatchesTrainingForHalfPixelHeight() {
+        val letterbox=Letterbox(128,25,320)
+        assertEquals(62,letterbox.resizedHeight)
+        assertEquals(129,letterbox.top)
+    }
     @Test fun landscapeLetterboxRoundTripRestoresOriginalCenter() {
         val box=Letterbox(274,164,320)
         val target=box.restore(137*box.scale+box.left,82*box.scale+box.top,

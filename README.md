@@ -24,7 +24,7 @@ Các marker xuất hiện trên radar phụ; không vẽ vào vùng ảnh radar 
 
 ## Dữ liệu và huấn luyện
 
-Xem [quy trình](docs/TRAINING.md), [kiến trúc và giới hạn](docs/ARCHITECTURE.md), [tiêu chuẩn QC](docs/QUALITY.md) và [audit đã thực hiện](docs/DATA_AUDIT_2026-10-30.md). Dữ liệu ảnh/video của người dùng và trọng số không đưa vào Git.
+Xem [quy trình](docs/TRAINING.md), [kiến trúc và giới hạn](docs/ARCHITECTURE.md), [tiêu chuẩn QC](docs/QUALITY.md) và [audit đã thực hiện](docs/DATA_AUDIT_2026-10-30.md) và [kết quả baseline thực đo](docs/BASELINE_2026-10-30.md). Dữ liệu ảnh/video của người dùng và trọng số không đưa vào Git.
 
 ```bash
 python -m pip install -r tools/vision_qc/requirements-qc.txt

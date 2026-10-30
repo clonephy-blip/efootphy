@@ -57,6 +57,8 @@ def preflight(data, expected_images, groups, profile, research_only):
     spec = PROFILES[profile]
     if report['task'] != spec['task'] or report['names'] != spec['names']:
         raise ValueError('Profile task/class order does not match data.yaml')
+    if profile=='landmarks' and report['kpt_shape']!=[32,3]:
+        raise ValueError('Landmark profile requires exactly 32 keypoints with visibility')
     if not report['data_valid']:
         raise ValueError(f'Dataset QC failed: {len(report["data_errors"])} errors; normalize and audit the full export first')
     if not research_only and not report['eligible_for_independent_evaluation']:

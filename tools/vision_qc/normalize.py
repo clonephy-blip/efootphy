@@ -55,7 +55,14 @@ def normalize_dataset(source, destination):
     converted_total = 0
     rows_total = 0
     for split in ['train', 'valid', 'test']:
-        image_index = {p.stem: p for p in (source/split/'images').glob('*') if p.is_file()}
+        images = [p for p in (source/split/'images').glob('*')
+                  if p.is_file() and p.suffix.lower() in {'.jpg','.jpeg','.png','.webp','.bmp'}]
+        image_index = {p.stem: p for p in images}
+        if len(image_index) != len(images):
+            raise ValueError(f'Ambiguous image stems in {split}')
+        for image in images:
+            if not (source/split/'labels'/(image.stem+'.txt')).is_file():
+                raise ValueError(f'Missing label for {image}')
         for label in sorted((source/split/'labels').glob('*.txt')):
             image = image_index.get(label.stem)
             if image is None:
