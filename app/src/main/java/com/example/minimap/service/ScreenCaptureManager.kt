@@ -21,26 +21,38 @@ import android.view.Display
 import android.view.WindowManager
 import com.example.minimap.processor.MinimapCropper
 import com.example.minimap.processor.RgbaFrame
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 class ScreenCaptureManager(
     context: Context,
     private val roiProvider: (width: Int, height: Int) -> Rect,
-    private val onFrame: (RgbaFrame) -> Unit, // Synchronous, capture thread; no UI access.
-    private val onState: (Boolean) -> Unit, // Main thread.
+    private val onFrame: (RgbaFrame) -> Unit,
+    private val onState: (Boolean) -> Unit,
     private val onError: (Throwable) -> Unit,
-    scanFps: Int = 15,
-    private val maxCaptureSide: Int = 1280
+    scanFps: Int = 60,
+    private val maxCaptureSide: Int = 960
 ) : AutoCloseable {
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
-    private val thread = HandlerThread("minimap-capture", Process.THREAD_PRIORITY_BACKGROUND)
-        .apply { start() }
+
+    // Nâng cấp 1: Đặt độ ưu tiên luồng ở mức URGENT_DISPLAY (-8) để ngang hàng với bộ dựng hình GPU 60FPS của game
+    private val thread = HandlerThread(
+        "efootball-realtime-60fps",
+        Process.THREAD_PRIORITY_URGENT_DISPLAY
+    ).apply { start() }
+
     private val worker = Handler(thread.looper)
     private val displays = requireNotNull(app.getSystemService(DisplayManager::class.java))
     private val cropper = MinimapCropper()
-    private val frameInterval = 1_000_000_000L / scanFps.coerceIn(1, 60)
+
+    // Nâng cấp 2: Đặt khoảng cách nhận frame có dung sai 15% (13.8ms cho 60FPS) để KHÔNG BAO GIỜ bị rớt nhịp VSYNC 16.6ms
+    private val frameIntervalNs = (830_000_000L / scanFps.coerceIn(15, 90))
+
+    // Khóa chống nghẽn cổ chai (Backpressure Drop): Nếu frame trước chưa vẽ xong thì bỏ qua ngay, chỉ lấy frame MỚI NHẤT
+    private val isProcessingFrame = AtomicBoolean(false)
+
     private var projection: MediaProjection? = null
     private var callback: MediaProjection.Callback? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -61,7 +73,6 @@ class ScreenCaptureManager(
         }
     }
 
-    /** Call only AFTER Service.startForeground(...mediaProjection). Token used once. */
     fun start(resultCode: Int, resultData: Intent) {
         if (closed) return
         worker.post {
@@ -80,13 +91,13 @@ class ScreenCaptureManager(
                     }
                 }
                 callback = cb
-                session.registerCallback(cb, worker) // Must precede createVirtualDisplay().
+                session.registerCallback(cb, worker)
                 val size = screenSize()
                 val scaled = scaledSize(size.x, size.y)
                 val output = newReader(scaled.x, scaled.y)
                 reader = output
                 virtualDisplay = session.createVirtualDisplay(
-                    "MinimapCapture", scaled.x, scaled.y, densityDpi,
+                    "RealTime60FpsCapture", scaled.x, scaled.y, densityDpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     output.surface, null, worker
                 )
@@ -99,26 +110,41 @@ class ScreenCaptureManager(
         }
     }
 
-    fun stop() { if (!closed) worker.post { release() } }
+    fun stop() {
+        if (!closed) worker.post { release() }
+    }
 
     private fun newReader(width: Int, height: Int): ImageReader =
-        ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3).apply {
+        ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2).apply {
             setOnImageAvailableListener({ source ->
                 if (source !== reader || closed) return@setOnImageAvailableListener
+                val image = try {
+                    source.acquireLatestImage()
+                } catch (_: Exception) {
+                    null
+                } ?: return@setOnImageAvailableListener
+
                 try {
-                    val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    if (source !== reader || closed) return@setOnImageAvailableListener
+                    val now = SystemClock.elapsedRealtimeNanos()
+                    if (now - lastFrameNs < frameIntervalNs) return@setOnImageAvailableListener
+                    if (!isProcessingFrame.compareAndSet(false, true)) return@setOnImageAvailableListener
+
                     try {
-                        if (source !== reader || closed) return@setOnImageAvailableListener
-                        val now = SystemClock.elapsedRealtimeNanos()
-                        if (now - lastFrameNs < frameInterval) return@setOnImageAvailableListener
                         lastFrameNs = now
-                        cropper.crop(image, roiProvider(image.width, image.height))?.let(onFrame)
+                        val roi = roiProvider(image.width, image.height)
+                        val frame = cropper.crop(image, roi, now)
+                        if (frame != null) {
+                            onFrame(frame)
+                        }
                     } finally {
-                        image.close() // Includes skipped frames and exceptions.
+                        isProcessingFrame.set(false)
                     }
                 } catch (error: Exception) {
                     release()
                     main.post { if (!closed) onError(error) }
+                } finally {
+                    image.close()
                 }
             }, worker)
         }
@@ -140,7 +166,6 @@ class ScreenCaptureManager(
             old?.close()
         }
         lastFrameNs = 0L
-        // Resize existing VirtualDisplay: never reuse a token to create another one.
     }
 
     @Suppress("DEPRECATION")
@@ -158,12 +183,16 @@ class ScreenCaptureManager(
     private fun scaledSize(width: Int, height: Int): Point {
         val scale = (maxCaptureSide.coerceAtLeast(1).toFloat() / max(width, height))
             .coerceAtMost(1f)
-        return Point((width * scale).roundToInt().coerceAtLeast(1),
-            (height * scale).roundToInt().coerceAtLeast(1))
+        return Point(
+            (width * scale).roundToInt().coerceAtLeast(1),
+            (height * scale).roundToInt().coerceAtLeast(1)
+        )
     }
 
     private fun safely(block: () -> Unit) {
-        try { block() } catch (error: Exception) {
+        try {
+            block()
+        } catch (error: Exception) {
             release()
             main.post { if (!closed) onError(error) }
         }
@@ -183,6 +212,7 @@ class ScreenCaptureManager(
         reader = null
         if (stopProjection) old?.stop()
         lastFrameNs = 0L
+        isProcessingFrame.set(false)
         main.post { if (!closed) onState(false) }
     }
 
