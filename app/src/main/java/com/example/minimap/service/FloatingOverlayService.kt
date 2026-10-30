@@ -57,7 +57,6 @@ class FloatingOverlayService : Service() {
         private const val CHANNEL = "minimap_assistant"
         private const val NOTIFICATION_ID = 1001
 
-        // Tọa độ chuẩn xác 100% ôm khít khung Minimap eFootball trên màn hình ngang
         @Volatile var roiLeftRatio = 0.436f
         @Volatile var roiTopRatio = 0.795f
         @Volatile var roiRightRatio = 0.564f
@@ -69,7 +68,6 @@ class FloatingOverlayService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val analyzer = TacticalAnalyzer()
 
-    // Bộ đệm nguyên tử Lock-Free: Luồng 60FPS cập nhật trực tiếp, không gây nghẽn hàng đợi giao diện
     private val latestFrameResult = AtomicReference<TacticalResult?>(null)
 
     private var controlPod: LinearLayout? = null
@@ -102,10 +100,8 @@ class FloatingOverlayService : Service() {
             onFrame = { frame ->
                 val result = analyzer.analyze(frame)
                 latestFrameResult.set(result)
-                // Kích hoạt vẽ ngay ở xung nhịp VSYNC 60Hz tiếp theo (Thread-safe, không qua Handler queue)
                 drawingLayer?.postInvalidateOnAnimation()
 
-                // Chỉ cập nhật chữ trên nút nổi khi chiều tấn công hoặc chế độ màn hình thực sự thay đổi
                 if (result.attackLeftToRight != lastDisplayedDirection || result.screenMode != lastScreenMode) {
                     lastDisplayedDirection = result.attackLeftToRight
                     lastScreenMode = result.screenMode
@@ -146,7 +142,7 @@ class FloatingOverlayService : Service() {
         }
         val arrow = if (analyzer.attackLeftToRight) "→" else "←"
         val modePrefix = if (analyzer.manualDirectionLock) "KHÓA" else "AUTO"
-        mainToggleBtn?.text = "$modePrefix $arrow"
+        mainToggleBtn?.text = "$modePrefix$arrow"
 
         if (lastScreenMode == ScreenMode.MODE_GAMEPLAN_FORMATION) {
             subActionBtn?.visibility = View.VISIBLE
@@ -192,7 +188,6 @@ class FloatingOverlayService : Service() {
             visibility = View.GONE
         }
         drawingLayer = hud
-        // Độ mờ 0.78f đảm bảo chuẩn chạm xuyên thấu 100% của Android 12/13/14/15
         windows.addView(
             hud,
             params(
@@ -399,7 +394,6 @@ class FloatingOverlayService : Service() {
         super.onDestroy()
     }
 
-    // ==================== LỚP VẼ THỰC TẾ TĂNG CƯỜNG 60FPS TRÊN MẶT CỎ SÂN 3D ====================
     private inner class RealTimeArHudView(context: Context) : View(context) {
         private val roiRect = RectF()
         private val cardRect = RectF()
@@ -459,7 +453,6 @@ class FloatingOverlayService : Service() {
 
             val res = latestFrameResult.get() ?: return
 
-            // 1. NẾU ĐANG MỞ MÀN HÌNH SƠ ĐỒ ĐỘI HÌNH (GAME PLAN) -> TỰ ĐỘNG HIỂN THỊ MẢNG 1
             if (res.screenMode == ScreenMode.MODE_GAMEPLAN_FORMATION && !hideFormationOverlayManually) {
                 res.autoFormation?.let { report ->
                     drawAutoFormationScanner(canvas, w, h, report)
@@ -467,8 +460,6 @@ class FloatingOverlayService : Service() {
                 }
             }
 
-            // 2. CHẾ ĐỘ TRONG TRẬN ĐẤU (60 FPS ON-PITCH AR VISION):
-            // Giữ Minimap trong suốt tuyệt đối, chỉ kẻ vạch việt vị và 1 tia mảnh nối bóng tới người nhận
             roiRect.set(w * roiLeftRatio, h * roiTopRatio, w * roiRightRatio, h * roiBottomRatio)
             canvas.drawRect(roiRect, minimapFramePaint)
 
@@ -483,7 +474,6 @@ class FloatingOverlayService : Service() {
                 drawCleanArrow(canvas, mx1, my1, mx2, my2, throughLaserPaint)
             }
 
-            // Vẽ vòng tròn khóa vị trí dưới bàn chân cầu thủ ông đang điều khiển trên Sân 3D
             res.controlledFoot3D?.let { foot ->
                 val fx = foot.x * w
                 val fy = foot.y * h
@@ -493,7 +483,6 @@ class FloatingOverlayService : Service() {
                 canvas.restore()
             }
 
-            // Vẽ tối đa 2 Tia Laser đường chuyền trực tiếp trên mặt cỏ 3D
             res.pitch3DOptions.forEachIndexed { idx, opt ->
                 val sx = opt.from3DX * w
                 val sy = opt.from3DY * h
@@ -503,7 +492,6 @@ class FloatingOverlayService : Service() {
                 val paint = if (idx == 0) throughLaserPaint else safePassPaint
                 drawCleanArrow(canvas, sx, sy, ex, ey, paint)
 
-                // Vẽ Vòng Tròn Điểm Rơi (Landing Target) trên mặt cỏ 3D
                 canvas.save()
                 canvas.scale(1f, 0.52f, ex, ey)
                 if (idx == 0) {
@@ -512,91 +500,5 @@ class FloatingOverlayService : Service() {
                 canvas.drawCircle(ex, ey, dp(26).toFloat(), paint)
                 canvas.restore()
 
-                // Nếu đồng đội đang chạy chỗ NGOÀI KHUNG HÌNH CAMERA -> Hiện ký hiệu Radar Mép Màn Hình
                 val label = when {
-                    opt.isOffScreen -> ">>> CÁNH TRỐNG (${opt.openSpacePct}%)"
-                    opt.isThroughRun -> "⚡ CHỌC KHE (${opt.openSpacePct}%)"
-                    else -> "✔ (${opt.openSpacePct}%)"
-                }
-                tagTextPaint.color = if (idx == 0) Color.rgb(167, 243, 208) else Color.YELLOW
-                canvas.drawText(label, (ex - dp(38)).coerceIn(dp(10).toFloat(), w - dp(130)), (ey - dp(16)).coerceAtLeast(dp(24).toFloat()), tagTextPaint)
-            }
-
-            // Cảnh báo Đỏ trên mặt cỏ 3D nếu có cầu thủ địch đang lén đứng trống ở sân nhà
-            res.dangerRunner3D?.let { danger ->
-                val dx = danger.x * w
-                val dy = danger.y * h
-                canvas.save()
-                canvas.scale(1f, 0.52f, dx, dy)
-                canvas.drawCircle(dx, dy, dp(28).toFloat(), dangerRingPaint)
-                canvas.restore()
-                tagTextPaint.color = Color.rgb(255, 100, 100)
-                canvas.drawText("⚠ BỌC LÓT!", dx - dp(32), dy - dp(18), tagTextPaint)
-            }
-        }
-
-        // Giao diện Mảng 1 Tự Động khi phát hiện màn hình Sơ đồ chiến thuật (Game Plan)
-        private fun drawAutoFormationScanner(
-            canvas: Canvas,
-            w: Float,
-            h: Float,
-            report: AutoFormationAnalysis
-        ) {
-            if (report.isWaitingForOpponentView) {
-                // Nhắc nhẹ ở mép trên khi người chơi đang nhìn đội hình của chính mình
-                cardRect.set(w * 0.22f, dp(10).toFloat(), w * 0.78f, dp(52).toFloat())
-                canvas.drawRoundRect(cardRect, dp(10).toFloat(), dp(10).toFloat(), modalBgPaint)
-                canvas.drawRoundRect(cardRect, dp(10).toFloat(), dp(10).toFloat(), footRingPaint)
-                tagTextPaint.color = Color.CYAN
-                canvas.drawText(
-                    "👁 MẢNG 1 TỰ ĐỘNG: Hãy bấm xem Sơ đồ Đối thủ 1 giây để AI quét tử huyệt!",
-                    cardRect.left + dp(14),
-                    cardRect.centerY() + dp(5),
-                    tagTextPaint
-                )
-                return
-            }
-
-            // Khi người chơi vừa chuyển sang xem sơ đồ đối thủ -> Khoanh vùng tử huyệt ngay lập tức!
-            for (card in report.detectedPlayerCards) {
-                canvas.drawCircle(card.x * w, card.y * h, dp(14).toFloat(), footRingPaint)
-            }
-
-            for (weak in report.weakZoneSpots) {
-                val wx = weak.x * w
-                val wy = weak.y * h
-                canvas.drawCircle(wx, wy, dp(40).toFloat(), dangerRingPaint)
-                tagTextPaint.color = Color.YELLOW
-                canvas.drawText("🎯 KHOÉT VÙNG NÀY", wx - dp(52), wy + dp(5), tagTextPaint)
-            }
-
-            cardRect.set(w * 0.18f, dp(10).toFloat(), w * 0.86f, dp(105).toFloat())
-            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), modalBgPaint)
-            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), throughLaserPaint)
-
-            var ty = cardRect.top + dp(24)
-            val lx = cardRect.left + dp(14)
-
-            tagTextPaint.color = Color.rgb(56, 189, 248)
-            canvas.drawText("🤖 SƠ ĐỒ ĐỐI THỦ: ${report.detectedFormation}", lx, ty, tagTextPaint)
-
-            ty += dp(22)
-            tagTextPaint.color = Color.rgb(250, 204, 21)
-            canvas.drawText("🔥 TỬ HUYỆT: ${report.tacticalWeakness}", lx, ty, tagTextPaint)
-
-            ty += dp(22)
-            tagTextPaint.color = Color.WHITE
-            canvas.drawText("💡 ${report.actionableAdvice}", lx, ty, tagTextPaint)
-        }
-
-        private fun drawCleanArrow(canvas: Canvas, sx: Float, sy: Float, ex: Float, ey: Float, paint: Paint) {
-            canvas.drawLine(sx, sy, ex, ey, paint)
-            val angle = atan2((ey - sy).toDouble(), (ex - sx).toDouble())
-            val head = dp(11).toFloat()
-            val a1 = angle - Math.PI / 6
-            val a2 = angle + Math.PI / 6
-            canvas.drawLine(ex, ey, (ex - head * cos(a1)).toFloat(), (ey - head * sin(a1)).toFloat(), paint)
-            canvas.drawLine(ex, ey, (ex - head * cos(a2)).toFloat(), (ey - head * sin(a2)).toFloat(), paint)
-        }
-    }
-}
+                    opt.isOffScreen ->
