@@ -1,6 +1,7 @@
 package com.example.minimap.processor
 
 import android.content.Context
+import android.os.SystemClock
 import com.efootphy.vision.Detection
 import com.efootphy.vision.DetectorPostprocess
 import com.efootphy.vision.FusionEngine
@@ -51,7 +52,7 @@ class TacticalAnalyzer(context: Context): AutoCloseable {
         val key=listOf(frame.width,frame.height,frame.roiLeft,frame.roiTop,frame.captureWidth,frame.captureHeight)
         if(roiKey!=key) { fusion.reset();epoch++;roiKey=key }
         if(frame.screenMode!=ScreenMode.MODE_LIVE_MATCH) {
-            fusion.update(FusionInput(frame.timestampNs,epoch,if(frame.screenMode==ScreenMode.MODE_GAMEPLAN_FORMATION) Scene.FORMATION else Scene.UNKNOWN))
+            fusion.update(FusionInput(SystemClock.elapsedRealtimeNanos(),epoch,if(frame.screenMode==ScreenMode.MODE_GAMEPLAN_FORMATION) Scene.FORMATION else Scene.UNKNOWN))
             return result(if(frame.screenMode==ScreenMode.MODE_GAMEPLAN_FORMATION) "Đang ở màn hình đội hình" else "Chưa thấy cảnh thi đấu")
         }
         val model=repository.current()
@@ -79,7 +80,8 @@ class TacticalAnalyzer(context: Context): AutoCloseable {
             Vec2((d.box.left+d.box.right)/2,(d.box.top+d.box.bottom)/2),Team.UNKNOWN,d.score,
             frame.timestampNs,epoch,Source.MINIMAP,Kind.BALL_MARKER)
         }
-        val world=fusion.update(FusionInput(frame.timestampNs,epoch,Scene.LIVE,observations,
+        // Freshness includes inference time; slow processing must not rejuvenate an old frame.
+        val world=fusion.update(FusionInput(SystemClock.elapsedRealtimeNanos(),epoch,Scene.LIVE,observations,
             modelsValidated=false))
         // Full-pitch/landmark models and independent device QC are required before enabling AR advice.
         return result(if(playerBoxes.isEmpty()) "Kiểm tra vùng radar" else "${playerBoxes.size} ứng viên · kiểm tra",world,detections)
