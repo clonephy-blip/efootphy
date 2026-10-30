@@ -1,49 +1,15 @@
-name: Build APK Fixed
-
-on:
-  push:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    # Ghim cố định ubuntu-24.04 (có sẵn Android SDK ổn định, tránh lỗi Ubuntu 26 mới cập nhật)
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: 1. Tải mã nguồn
-        uses: actions/checkout@v4
-
-      - name: 2. Cài đặt Java 17 (Đã nâng lên v5 theo yêu cầu của GitHub)
-        uses: actions/setup-java@v5
+- name: Cố định chữ ký APK (Giúp cài đè bản mới không cần gỡ bản cũ)
+        uses: actions/cache@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          path: ~/.android/debug.keystore
+          key: efootball-fixed-debug-keystore-v1
 
-      - name: 3. Cấp quyền Android SDK 35
+      - name: Khởi tạo Keystore nếu chưa có
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-
-      - name: 4. Cài đặt Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: 5. Tự động tìm đúng thư mục chứa code và Build APK
-        run: |
-          if [ -f "settings.gradle.kts" ]; then
-            gradle assembleDebug --stacktrace
-          elif [ -f "efootball-minimap-assistant/settings.gradle.kts" ]; then
-            cd efootball-minimap-assistant
-            gradle assembleDebug --stacktrace
-          else
-            echo "Không tìm thấy file settings.gradle.kts!"
-            ls -la
-            exit 1
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkey -v -keystore ~/.android/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
-
-      - name: 6. Xuất file APK để tải về
-        uses: actions/upload-artifact@v4
-        with:
-          name: eFootball-Minimap-APK
-          path: "**/app/build/outputs/apk/debug/app-debug.apk"
