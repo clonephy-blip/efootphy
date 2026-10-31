@@ -389,12 +389,10 @@ class FloatingOverlayService : Service() {
         super.onDestroy()
     }
 
-    // Lớp vẽ 60FPS: Dùng bảng màu KHÔNG TRÙNG với màu Cyan của con trỏ game để tránh tự nuốt hình vẽ!
     private inner class RealTimeArHudView(context: Context) : View(context) {
         private val roiRect = RectF()
         private val cardRect = RectF()
 
-        // Dùng màu Vàng Cam cho vòng tròn chân cầu thủ (Không dùng màu Cyan để tránh tự quét lại chính mình)
         private val footRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = dp(2).toFloat()
@@ -444,21 +442,17 @@ class FloatingOverlayService : Service() {
 
             val res = latestFrameResult.get() ?: return
 
-            // 1. NẾU ĐANG BẬT QUÉT SƠ ĐỒ ĐỐI THỦ (MẢNG 1)
             res.autoFormation?.let { report ->
                 drawFormationReport(canvas, w, h, report)
                 return
             }
 
-            // 2. VẼ VIỀN NGOÀI MINIMAP (Không vẽ bất cứ nét nào vào bên trong lòng Minimap để chống nhiễu 100%)
             roiRect.set(w * roiLeftRatio, h * roiTopRatio, w * roiRightRatio, h * roiBottomRatio)
             canvas.drawRect(roiRect, minimapBorderPaint)
             val offX = roiRect.left + res.offsideLineX * roiRect.width()
-            // Chỉ vẽ 2 vạch nhỏ báo việt vị ở mép ngoài phía trên và phía dưới khung Minimap
             canvas.drawLine(offX, roiRect.top - dp(6), offX, roiRect.top, secondaryPassPaint)
             canvas.drawLine(offX, roiRect.bottom, offX, roiRect.bottom + dp(6), secondaryPassPaint)
 
-            // 3. VẼ VÒNG TRÒN DƯỚI CHÂN CẦU THỦ ĐANG CẦM BÓNG & TIA LASER ĐƯỜNG CHUYỀN TRÊN SÂN 3D
             val foot = res.controlledFoot3D ?: return
             val fx = foot.x * w
             val fy = foot.y * h
@@ -476,7 +470,6 @@ class FloatingOverlayService : Service() {
                 val paint = if (idx == 0) primaryPassPaint else secondaryPassPaint
 
                 if (opt.isOffScreen) {
-                    // Đồng đội ở ngoài khung hình Camera: Vẽ mũi tên la bàn ngắn (55dp) ngay trước chân cầu thủ chỉ hướng gạt cần!
                     val angle = atan2((ey - sy).toDouble(), (ex - sx).toDouble())
                     val pointerLen = dp(58).toFloat()
                     val px = sx + (pointerLen * cos(angle)).toFloat()
@@ -485,7 +478,6 @@ class FloatingOverlayService : Service() {
                     textPaint.color = Color.rgb(250, 204, 21)
                     canvas.drawText("🚀 PHẤT DÀI (${opt.openSpacePct}%)", px - dp(35), py - dp(8), textPaint)
                 } else {
-                    // Đồng đội đang ở ngay trong khung hình Sân 3D: Nối thẳng Tia Laser tới chân đồng đội!
                     drawArrow(canvas, sx, sy, ex, ey, paint)
                     canvas.save()
                     canvas.scale(1f, 0.52f, ex, ey)
