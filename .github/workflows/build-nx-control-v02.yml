@@ -26,15 +26,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - name: Build release APK
+      - name: Build signed debug APK
         working-directory: nxcontrol
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
-        run: gradle :app:assembleRelease --stacktrace
+        run: gradle :app:assembleDebug --stacktrace
       - name: Show APK output
-        run: ls -lah nxcontrol/app/build/outputs/apk/release/
+        run: ls -lah nxcontrol/app/build/outputs/apk/debug/
       - uses: actions/upload-artifact@v4
         with:
-          name: NX-Control-Center-v0.2.0-APK
-          path: nxcontrol/app/build/outputs/apk/release/*.apk
+          name: NX-Control-Center-v0.2.0-SIGNED
+          path: nxcontrol/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
