@@ -15,8 +15,8 @@ class RgbaFrame(
     val pixels: ByteArray,
     val timestampNs: Long = 0L,
     val screenMode: Int = ScreenMode.MODE_LIVE_MATCH,
-    val controlled3DX: Float = -1f, // Tọa độ X (0..1) bàn chân cầu thủ đang cầm bóng trên Sân 3D
-    val controlled3DY: Float = -1f, // Tọa độ Y (0..1) bàn chân cầu thủ đang cầm bóng trên Sân 3D
+    val controlled3DX: Float = -1f,
+    val controlled3DY: Float = -1f,
     val gridW: Int = 0,
     val gridH: Int = 0,
     val gridPixels: ByteArray = ByteArray(0)
@@ -26,7 +26,6 @@ class MinimapCropper {
     private var minimapBuffer = ByteArray(0)
     private var gridBuffer = ByteArray(0)
 
-    // Giữ tương thích ngược nếu nơi nào gọi hàm 2 tham số
     fun crop(image: Image, roi: Rect): RgbaFrame? = crop(image, roi, System.nanoTime())
 
     fun crop(image: Image, roi: Rect, timestampNs: Long): RgbaFrame? {
@@ -41,7 +40,6 @@ class MinimapCropper {
         val imgH = image.height
         if (imgW <= 32 || imgH <= 32) return null
 
-        // 1. Cắt vùng Minimap độ nét gốc
         val left = roi.left.coerceIn(0, imgW - 2)
         val top = roi.top.coerceIn(0, imgH - 2)
         val right = roi.right.coerceIn(left + 2, imgW)
@@ -76,9 +74,6 @@ class MinimapCropper {
             }
         }
 
-        // 2. Quét lưới toàn màn hình 3D (Step = 4) trong 0.3ms để:
-        //    (a) Bắt thanh tên Xanh Ngọc (Neon Cyan) trên đầu cầu thủ đang điều khiển trên sân 3D
-        //    (b) Tự động phân biệt đang Đá trong trận (LIVE_MATCH) hay đang mở Sơ đồ chiến thuật (GAMEPLAN)
         val step = 4
         val gW = imgW / step
         val gH = imgH / step
@@ -87,83 +82,65 @@ class MinimapCropper {
             gridBuffer = ByteArray(neededGrid)
         }
 
-        var sumCyanX = 0f
-        var sumCyanY = 0f
-        var cyanCount = 0
-
-        var pitchGrassPixels = 0
-        var leftSidebarDarkBluePixels = 0
-        var formationPitchGreenPixels = 0
-
-        val pitchMinY = (gH * 0.12f).toInt()
-        val pitchMaxY = (gH * 0.76f).toInt()
-        val pitchMinX = (gW * 0.08f).toInt()
-        val pitchMaxX = (gW * 0.92f).toInt()
-
         var gIdx = 0
         for (gy in 0 until gH) {
             val rowStart = (gy * step) * rowStride
-            val in3DPlayAreaY = gy in pitchMinY..pitchMaxY
-
             for (gx in 0 until gW) {
                 val pPos = rowStart + (gx * step) * pixelStride
-                val r = buffer.get(pPos).toInt() and 0xFF
-                val g = buffer.get(pPos + 1).toInt() and 0xFF
-                val b = buffer.get(pPos + 2).toInt() and 0xFF
-
-                gridBuffer[gIdx] = r.toByte()
-                gridBuffer[gIdx + 1] = g.toByte()
-                gridBuffer[gIdx + 2] = b.toByte()
+                gridBuffer[gIdx] = buffer.get(pPos)
+                gridBuffer[gIdx + 1] = buffer.get(pPos + 1)
+                gridBuffer[gIdx + 2] = buffer.get(pPos + 2)
                 gridBuffer[gIdx + 3] = -1
                 gIdx += 4
+            }
+        }
 
-                // Kiểm tra màu cỏ trên sân
-                if (g > r + 14 && g > b + 18 && g in 55..190) {
-                    pitchGrassPixels++
-                    if (gx > gW * 0.25f && gx < gW * 0.92f && gy in (gH * 0.10f).toInt()..(gH * 0.88f).toInt()) {
-                        formationPitchGreenPixels++
-                    }
-                }
+        // Quét tìm Tam giác Xanh Ngọc dưới Thanh Thể Lực Đen của cầu thủ đang điều khiển (Bỏ qua bảng LED khán đài y < 0.23)
+        val minPlayY = (gH * 0.23f).toInt().coerceAtLeast(2)
+        val maxPlayY = (gH * 0.77f).toInt().coerceAtMost(gH - 2)
+        val minPlayX = (gW * 0.12f).toInt().coerceAtLeast(2)
+        val maxPlayX = (gW * 0.88f).toInt().coerceAtMost(gW - 2)
 
-                // Kiểm tra cột menu bên trái đặc trưng của màn hình Sơ đồ Game Plan eFootball (Màu Xanh Đen / Xám Tối)
-                if (gx < gW * 0.22f && r < 45 && g < 55 && b in 35..110) {
-                    leftSidebarDarkBluePixels++
-                }
+        var sumCursorX = 0f
+        var sumCursorY = 0f
+        var cursorHits = 0
 
-                // Bắt thanh thể lực & con trỏ Xanh Ngọc (Neon Cyan) trên đầu cầu thủ đang điều khiển trên sân 3D
-                if (in3DPlayAreaY && gx in pitchMinX..pitchMaxX) {
-                    if (g > 212 && b > 202 && r < 72) {
-                        sumCyanX += gx.toFloat() / gW
-                        sumCyanY += gy.toFloat() / gH
-                        cyanCount++
+        for (gy in minPlayY..maxPlayY) {
+            val rowOff = gy * gW
+            for (gx in minPlayX..maxPlayX) {
+                val idx = (rowOff + gx) * 4
+                val r = gridBuffer[idx].toInt() and 0xFF
+                val g = gridBuffer[idx + 1].toInt() and 0xFF
+                val b = gridBuffer[idx + 2].toInt() and 0xFF
+
+                // Tam giác con trỏ eFootball: Xanh Ngọc sáng (R < 55, G > 210, B > 210)
+                if (r < 55 && g > 210 && b > 210) {
+                    // Kiểm tra ngay phía trên (gy - 1 hoặc gy - 2) phải có nền Đen của hộp thanh thể lực!
+                    val up1 = ((gy - 1) * gW + gx) * 4
+                    val up2 = ((gy - 2) * gW + gx) * 4
+                    val r1 = gridBuffer[up1].toInt() and 0xFF
+                    val g1 = gridBuffer[up1 + 1].toInt() and 0xFF
+                    val b1 = gridBuffer[up1 + 2].toInt() and 0xFF
+                    val r2 = gridBuffer[up2].toInt() and 0xFF
+                    val g2 = gridBuffer[up2 + 1].toInt() and 0xFF
+                    val b2 = gridBuffer[up2 + 2].toInt() and 0xFF
+
+                    val hasDarkStaminaBox = (r1 < 48 && g1 < 48 && b1 < 48) || (r2 < 48 && g2 < 48 && b2 < 48)
+                    if (hasDarkStaminaBox) {
+                        sumCursorX += gx.toFloat() / gW
+                        sumCursorY += gy.toFloat() / gH
+                        cursorHits++
                     }
                 }
             }
         }
 
-        // Xác định tọa độ bàn chân cầu thủ đang cầm bóng trên mặt cỏ 3D (nằm dưới thanh tên khoảng 8.2% chiều cao màn hình)
         var foot3DX = -1f
         var foot3DY = -1f
-        if (cyanCount >= 2) {
-            foot3DX = (sumCyanX / cyanCount).coerceIn(0.05f, 0.95f)
-            foot3DY = ((sumCyanY / cyanCount) + 0.082f).coerceIn(0.15f, 0.88f)
-        }
-
-        // Nhận diện tự động Trạng thái Màn hình
-        val totalGridCells = (gW * gH).coerceAtLeast(1)
-        val grassRatio = pitchGrassPixels.toFloat() / totalGridCells
-        val leftSidebarRatio = leftSidebarDarkBluePixels.toFloat() / (totalGridCells * 0.22f)
-
-        val detectedMode = when {
-            // Màn hình Sơ đồ đội hình (Game Plan): Có cột menu tối bên trái (> 45%) và sa bàn sân cỏ bên phải
-            leftSidebarRatio > 0.45f && formationPitchGreenPixels > totalGridCells * 0.18f -> {
-                ScreenMode.MODE_GAMEPLAN_FORMATION
-            }
-            // Màn hình Đang đá trong trận: Mặt cỏ chiếm đa số màn hình (> 38%)
-            grassRatio > 0.38f -> {
-                ScreenMode.MODE_LIVE_MATCH
-            }
-            else -> ScreenMode.MODE_UNKNOWN_OR_MENU
+        if (cursorHits >= 1) {
+            foot3DX = (sumCursorX / cursorHits).coerceIn(0.08f, 0.92f)
+            // Vòng tròn trắng dưới bàn chân cầu thủ nằm dưới mũi tam giác Xanh Ngọc đúng 6.8% chiều cao màn hình
+            foot3DY = ((sumCursorY / cursorHits) + 0.068f).coerceIn(0.24f, 0.85f)
         }
 
         return RgbaFrame(
@@ -171,7 +148,7 @@ class MinimapCropper {
             height = cropH,
             pixels = minimapBuffer,
             timestampNs = timestampNs,
-            screenMode = detectedMode,
+            screenMode = ScreenMode.MODE_LIVE_MATCH,
             controlled3DX = foot3DX,
             controlled3DY = foot3DY,
             gridW = gW,
