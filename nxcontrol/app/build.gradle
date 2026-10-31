@@ -13,6 +13,4 @@ android {
     buildTypes { release { minifyEnabled false } }
 }
 
-repositories { maven { url 'https://jitpack.io' } }
-
 dependencies { implementation 'com.github.topjohnwu.libsu:core:6.0.0' }
