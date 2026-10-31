@@ -55,6 +55,20 @@ Field ONNX evaluation is numerical by default; `evaluate_field --plots` enables
 its optional charts. Source annotation totals include exact duplicate rows; QC
 warns about these because the training loader removes duplicate annotations.
 
+`python -m tools.vision_qc.group_candidates --data DATA.yaml --out REVIEW.json`
+reports filename-derived source prefixes and overlap across splits. These are
+review hypotheses; screenshots and unmatched names stay unknown. The report
+always sets `verified=false` and is deliberately not an auditor groups mapping.
+Review identities before using existing labeled images to form new, source-group
+disjoint splits. Do not describe the original source test as independent when
+its presumed video prefixes also appear in training.
+
+`python -m tools.vision_qc.inspect_field --bundle RUN/bundle --data SOURCE_DATA.yaml
+--split test --out NEW_DIR` draws original-image ground truth in yellow and ONNX
+predictions in cyan for four deterministically spaced source frames. It uses a
+fixed 0.35 score threshold. These previews and object counts are diagnostic;
+use `evaluate_field` for metrics over the entire frozen source split.
+
 `--weights /path/to/last.pt` starts from saved weights with a **new optimizer**;
 it does not resume optimizer/scheduler state. Use a new output directory. Portable
 CPU checkpoints use atomic replacement so interrupted writes do not overwrite the

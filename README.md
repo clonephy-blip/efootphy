@@ -18,13 +18,15 @@ Java 17, Android SDK 35, Gradle 8.9:
 gradle :vision-core:test :app:lintDebug :app:assembleDebug
 ```
 
-APK không nhúng trọng số. Nhập ZIP sinh bởi công cụ train (`model.onnx` và `manifest.json` ở gốc ZIP), cấp quyền cửa sổ nổi, bật trợ lý, chuyển sang game rồi chạm **BẬT QUÉT**. Cho phép chia sẻ **toàn màn hình**; chia sẻ riêng một app/cửa sổ chưa được hiệu chỉnh tọa độ trong bản này. Chỉnh bốn thanh vùng radar theo điện thoại. Dừng từ bubble hoặc thông báo.
+APK không nhúng trọng số. Chỉ nhập ZIP **profile minimap** sinh bởi công cụ train (`model.onnx` và `manifest.json` ở gốc ZIP); gói field/landmark nghiên cứu chưa được APK hỗ trợ. Cấp quyền cửa sổ nổi, bật trợ lý, chuyển sang game rồi chạm **BẬT QUÉT**. Cho phép chia sẻ **toàn màn hình**; chia sẻ riêng một app/cửa sổ chưa được hiệu chỉnh tọa độ trong bản này. Chỉnh bốn thanh vùng radar theo điện thoại. Dừng từ bubble hoặc thông báo.
 
 Các marker xuất hiện trên radar phụ; không vẽ vào vùng ảnh radar đang đọc. Lớp vẽ tự ẩn sau 250 ms khi mất kết quả. Đổi ROI/đổi phiên capture xóa trạng thái cũ. Cần kiểm tra thực tế status bar, cutout, thanh điều hướng và xoay màn hình trên từng thiết bị.
 
 ## Dữ liệu và huấn luyện
 
 Xem [quy trình](docs/TRAINING.md), [kiến trúc và giới hạn](docs/ARCHITECTURE.md), [tiêu chuẩn QC](docs/QUALITY.md) và [audit đã thực hiện](docs/DATA_AUDIT_2026-10-30.md) và [kết quả baseline thực đo](docs/BASELINE_2026-10-30.md). Dữ liệu ảnh/video của người dùng và trọng số không đưa vào Git.
+
+[Lượt field/pose ngày 01/11/2026](docs/PHASE2_2026-11-01.md) đã có trọng số và QC thực: AP50 cầu thủ 94,04%, bóng 13,19% trên 82 ảnh test nguồn; mốc sân đạt 0/92 điểm ở ngưỡng sai số 10 pixel trên validation. Các split chưa độc lập theo trận/video; bóng và mốc sân chưa đạt để mở trợ lý chiến thuật.
 
 ```bash
 python -m pip install -r tools/vision_qc/requirements-qc.txt
