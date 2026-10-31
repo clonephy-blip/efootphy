@@ -1,0 +1,18 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.clonephy.nxcontrol'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.clonephy.nxcontrol'
+        minSdk 29
+        targetSdk 36
+        versionCode 20
+        versionName '0.2.0'
+    }
+    buildTypes { release { minifyEnabled false } }
+}
+
+repositories { maven { url 'https://jitpack.io' } }
+
+dependencies { implementation 'com.github.topjohnwu.libsu:core:6.0.0' }
