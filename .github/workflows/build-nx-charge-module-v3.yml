@@ -1,0 +1,129 @@
+name: Build NX Charge Space Magisk Module v3
+
+on:
+  push:
+    branches: [ "nx-charge-module-build" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Restore NX Charge Space source
+        shell: bash
+        run: |
+          base64 -d .github/nxcharge-source.b64 > /tmp/nxcharge-source.zip
+          unzip -q /tmp/nxcharge-source.zip -d "$GITHUB_WORKSPACE/buildsrc"
+          test -f "$GITHUB_WORKSPACE/buildsrc/NX659J_Bypass_Gaming/app/build.gradle"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          cd "$GITHUB_WORKSPACE/buildsrc/NX659J_Bypass_Gaming"
+          gradle :app:assembleDebug --stacktrace
+          test -f app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Build Magisk module
+        shell: bash
+        run: |
+          set -e
+          OUT="$GITHUB_WORKSPACE/out"
+          MOD="$GITHUB_WORKSPACE/module"
+          APK="$GITHUB_WORKSPACE/buildsrc/NX659J_Bypass_Gaming/app/build/outputs/apk/debug/app-debug.apk"
+          rm -rf "$MOD" "$OUT"
+          mkdir -p "$MOD/app" "$MOD/webroot" "$OUT"
+          cp "$APK" "$MOD/app/NXChargeSpace.apk"
+
+          cat > "$MOD/module.prop" <<'EOF'
+          id=nx_charge_space
+          name=NX Charge Space
+          version=v0.1.0
+          versionCode=1
+          author=clonephy
+          description=NX659J bypass charging launcher. Auto-installs APK and provides Action/WebUI launch.
+          EOF
+
+          cat > "$MOD/customize.sh" <<'EOF'
+          SKIPMOUNT=true
+          PROPFILE=false
+          POSTFSDATA=false
+          LATESTARTSERVICE=true
+          ui_print "======================================="
+          ui_print " NX Charge Space v0.1.0"
+          ui_print " Bypass charging only"
+          ui_print "======================================="
+          unzip -o "$ZIPFILE" 'app/*' 'webroot/*' service.sh action.sh uninstall.sh -d "$MODPATH" >&2
+          chmod 0755 "$MODPATH/service.sh" "$MODPATH/action.sh" "$MODPATH/uninstall.sh"
+          chmod 0644 "$MODPATH/app/NXChargeSpace.apk"
+          ui_print "- Installing companion APK..."
+          if pm install -r "$MODPATH/app/NXChargeSpace.apk" >/dev/null 2>&1; then
+            ui_print "- APK installed"
+          else
+            ui_print "- APK install will retry after boot"
+          fi
+          ui_print "- Reboot once, then use Action/WebUI"
+          EOF
+
+          cat > "$MOD/service.sh" <<'EOF'
+          #!/system/bin/sh
+          MODDIR=${0%/*}
+          APK="$MODDIR/app/NXChargeSpace.apk"
+          PKG="com.clonephy.nxcharge"
+          until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
+          sleep 3
+          if ! pm path "$PKG" >/dev/null 2>&1; then
+            pm install -r "$APK" >/dev/null 2>&1
+          fi
+          EOF
+
+          cat > "$MOD/action.sh" <<'EOF'
+          #!/system/bin/sh
+          MODDIR=${0%/*}
+          APK="$MODDIR/app/NXChargeSpace.apk"
+          PKG="com.clonephy.nxcharge"
+          if ! pm path "$PKG" >/dev/null 2>&1; then
+            pm install -r "$APK" >/dev/null 2>&1
+            sleep 1
+          fi
+          am start -n "$PKG/.MainActivity" >/dev/null 2>&1
+          EOF
+
+          cat > "$MOD/uninstall.sh" <<'EOF'
+          #!/system/bin/sh
+          pm uninstall com.clonephy.nxcharge >/dev/null 2>&1 || true
+          EOF
+
+          cat > "$MOD/webroot/index.html" <<'EOF'
+          <!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NX Charge Space</title><style>:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#0b0d10;color:#fff;font-family:system-ui,sans-serif;padding:24px}.card{max-width:520px;margin:auto;background:#171b22;border-radius:24px;padding:22px}h1{margin:0 0 6px}p{color:#aab3be}button{width:100%;border:0;border-radius:16px;padding:16px;margin:8px 0;font-size:16px;font-weight:700;background:#69f0ae;color:#06120c}.secondary{background:#2a3039;color:#fff}#s{margin-top:12px;color:#aab3be}</style></head><body><div class="card"><h1>NX Charge Space</h1><p>NX659J • Bypass charging</p><button onclick="openApp()">MỞ APP</button><button class="secondary" onclick="toggle()">BẬT / TẮT SẠC NHÁNH</button><div id="s">Sẵn sàng</div></div><script>const s=document.getElementById('s');function ex(c){try{if(window.ksu&&typeof window.ksu.exec==='function'){let r=window.ksu.exec(c);return typeof r==='string'?r:(r&&r.stdout?r.stdout:'')}}catch(e){s.textContent='WebUI bridge error'}return ''}function openApp(){ex('am start -n com.clonephy.nxcharge/.MainActivity');s.textContent='Đã gửi lệnh mở app'}function toggle(){let o=ex('N=/sys/class/power_supply/battery/charge_control_limit; V=$(cat $N 2>/dev/null); chmod 644 $N; if [ "$V" = 4 ]; then echo 0 > $N; chmod 444 $N; echo OFF; else echo 4 > $N; echo ON; fi').trim();s.textContent=o?('Sạc nhánh: '+o):'Dùng Action để mở app nếu WebUI shell không khả dụng'}</script></body></html>
+          EOF
+
+          chmod 0755 "$MOD/customize.sh" "$MOD/service.sh" "$MOD/action.sh" "$MOD/uninstall.sh"
+          cd "$MOD"
+          zip -qr "$OUT/NX_Charge_Space_v0.1.0_Magisk.zip" .
+          sha256sum "$OUT/NX_Charge_Space_v0.1.0_Magisk.zip" > "$OUT/SHA256.txt"
+          unzip -l "$OUT/NX_Charge_Space_v0.1.0_Magisk.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NX-Charge-Space-Magisk-v0.1.0
+          path: out/*
+          if-no-files-found: error
