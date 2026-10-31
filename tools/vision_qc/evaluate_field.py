@@ -11,6 +11,7 @@ def main():
     p.add_argument('--bundle',required=True,type=Path)
     p.add_argument('--data',required=True,type=Path,help='Prepared YAML from the training run')
     p.add_argument('--split',choices=['val','test'],default='test')
+    p.add_argument('--plots',action='store_true',help='Optional plots; numeric evaluation runs by default')
     p.add_argument('--out',required=True,type=Path)
     a=p.parse_args()
     if a.out.exists():raise ValueError('Use a new output directory')
@@ -34,7 +35,7 @@ def main():
         raise ValueError('Unexpected field ONNX shape')
     del session
     metrics=YOLO(model,task='detect').val(data=str(a.data.resolve()),split=a.split,imgsz=640,
-        batch=1,device='cpu',workers=0,plots=True,project=str(a.out.resolve()),name='metrics')
+        batch=1,device='cpu',workers=0,plots=a.plots,project=str(a.out.resolve()),name='metrics')
     report={'schema_version':1,'model_sha256':digest,'split':a.split,
         'scope':'source export only; match/video separation and Mobile generalization not established',
         'metrics':{k:float(v) for k,v in metrics.results_dict.items()},

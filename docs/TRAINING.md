@@ -48,6 +48,13 @@ are outside that estimate. `progress.json` records actual completed epochs,
 elapsed time, metrics and checkpoint existence; requested epochs are not completed
 epochs. Create `OUT/STOP_AFTER_EPOCH` for a graceful stop.
 
+`--no-plots` skips optional upstream training/final-validation charts without
+changing loss, numerical validation or checkpoint selection. Use this when label
+plotting stalls on a restricted host. Polars threads are capped before import.
+Field ONNX evaluation is numerical by default; `evaluate_field --plots` enables
+its optional charts. Source annotation totals include exact duplicate rows; QC
+warns about these because the training loader removes duplicate annotations.
+
 `--weights /path/to/last.pt` starts from saved weights with a **new optimizer**;
 it does not resume optimizer/scheduler state. Use a new output directory. Portable
 CPU checkpoints use atomic replacement so interrupted writes do not overwrite the

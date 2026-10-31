@@ -110,6 +110,7 @@ def audit(data_yaml, expected_images=None, groups_file=None, require_test=True):
             if not label.resolve().is_relative_to(root):
                 errors.append({'code': 'external_label', 'image': relative})
                 continue
+            annotation_rows = set()
             for line_no, line in enumerate(label.read_text().splitlines(), 1):
                 if not line.strip():
                     continue  # Explicit empty labels are allowed for reviewed negative frames.
@@ -122,6 +123,10 @@ def audit(data_yaml, expected_images=None, groups_file=None, require_test=True):
                 if not row or not all(math.isfinite(v) for v in row):
                     errors.append({'code': 'non_finite', **context})
                     continue
+                if tuple(row) in annotation_rows:
+                    warnings.append({'code': 'duplicate_annotation_row', **context,
+                                     'detail': 'Source instance totals include this row; upstream training deduplicates it'})
+                annotation_rows.add(tuple(row))
                 cid = int(row[0])
                 if row[0] != cid or not 0 <= cid < len(names):
                     errors.append({'code': 'class_out_of_range', **context})

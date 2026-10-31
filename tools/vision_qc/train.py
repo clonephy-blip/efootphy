@@ -89,6 +89,7 @@ def main():
     parser.add_argument('--weights', type=Path, help='Warm-start checkpoint; optimizer is newly initialized')
     parser.add_argument('--max-minutes', type=float, help='Training budget checked at saved epoch boundaries')
     parser.add_argument('--pose-train-sigma', type=float, help='Custom training OKS sigma; validation metric remains unchanged')
+    parser.add_argument('--no-plots', action='store_true', help='Skip optional upstream plotting; numeric validation is unchanged')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     if args.epochs < 1 or args.threads < 1 or args.batch < 1 or not 0 < args.lr <= 0.01:
@@ -121,6 +122,7 @@ def main():
     prepared.write_text(yaml.safe_dump(config, sort_keys=False))
     if args.portable_cpu:
         os.environ['ATEN_CPU_CAPABILITY'] = 'default'
+    os.environ.setdefault('POLARS_MAX_THREADS', str(args.threads))
     import torch
     if args.portable_cpu:
         torch.backends.mkldnn.enabled = args.cpu_backend == 'onednn'
@@ -159,7 +161,7 @@ def main():
                          fliplr=0.0 if spec['task'] == 'pose' else 0.5, flipud=0.0, degrees=0.0,
                          translate=0.0 if spec['task'] == 'pose' else 0.1,
                          scale=0.0 if spec['task'] == 'pose' else 0.5,
-                         hsv_h=0.0, hsv_s=0.15, hsv_v=0.2, plots=True,
+                         hsv_h=0.0, hsv_s=0.15, hsv_v=0.2, plots=not args.no_plots,
                          project=str(args.out.resolve()), name='run', exist_ok=False)
     best = Path(model.trainer.best)
     epochs_completed = int(model.trainer.epoch) + 1
@@ -167,7 +169,7 @@ def main():
     model = YOLO(best)
     checkpoint_epoch = int(model.ckpt.get('epoch', -1)) + 1
     validation = model.val(data=str(prepared.resolve()), split='val', imgsz=spec['imgsz'],
-                           device=args.device, batch=args.batch, workers=0, plots=True,
+                           device=args.device, batch=args.batch, workers=0, plots=not args.no_plots,
                            project=str(args.out.resolve()), name='validation')
     export = Path(model.export(format='onnx', imgsz=spec['imgsz'], opset=17, simplify=False,
                               dynamic=False, nms=False, device='cpu'))
@@ -189,6 +191,7 @@ def main():
                 'seed': 20261030, 'epochs_requested': args.epochs, 'epochs_completed': epochs_completed,
                 'checkpoint': 'best.pt', 'checkpoint_epoch': checkpoint_epoch,
                 'learning_rate': args.lr,
+                'optional_plots_enabled': not args.no_plots,
                 'training_seconds': control.seconds, 'training_budget_minutes': args.max_minutes,
                 'training_stop_reason': control.reason or 'upstream_early_stop_or_epochs',
                 'cpu_backend': args.cpu_backend if args.portable_cpu else 'upstream',

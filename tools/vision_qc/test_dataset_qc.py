@@ -60,6 +60,15 @@ class DatasetQcTest(unittest.TestCase):
         data=self.fixture();(self.root/'train/labels/frame.txt').write_text('')
         self.assertTrue(audit(data)['data_valid'])
 
+    def test_duplicate_annotations_are_reported_without_changing_source_counts(self):
+        data=self.fixture();label=self.root/'train/labels/frame.txt'
+        label.write_text(label.read_text()+'0 .2 .2 .1 .1\n')
+        result=audit(data)
+        self.assertTrue(result['data_valid'])
+        self.assertEqual(result['instances']['ball'],4)
+        self.assertIn('duplicate_annotation_row',{x['code'] for x in result['review_warnings']})
+        self.assertFalse(result['eligible_for_independent_evaluation'])
+
     def test_cross_split_duplicate_pixels_fail(self):
         data=self.fixture();shutil.copy2(self.root/'train/images/frame.png',self.root/'valid/images/frame.png')
         self.assertIn('duplicate_pixels_across_splits',self.codes(audit(data)))
