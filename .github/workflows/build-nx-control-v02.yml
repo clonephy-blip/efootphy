@@ -31,7 +31,10 @@ jobs:
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
         run: gradle :app:assembleRelease --stacktrace
+      - name: Show APK output
+        run: ls -lah nxcontrol/app/build/outputs/apk/release/
       - uses: actions/upload-artifact@v4
         with:
           name: NX-Control-Center-v0.2.0-APK
-          path: nxcontrol/app/build/outputs/apk/release/app-release.apk
+          path: nxcontrol/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
