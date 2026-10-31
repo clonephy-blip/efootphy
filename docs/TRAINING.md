@@ -76,3 +76,25 @@ The Android model importer currently accepts the minimap detector only. Field
 and landmark bundles are research exports; training or exporting them does not
 connect those branches to Android capture or enable tactical advice.
 
+Use `python -m tools.vision_qc.landmark_diagnostics --data DATA.yaml --out NEW_DIR`
+to inspect per-ID visible support and centre-label consistency. ID 15 in this
+source export is the centre spot. This must not be assumed from a generic
+32-point pitch template. IDs 13/16 and 30/31 define two intersecting pitch lines;
+their intersection gives a source-label consistency check, not model accuracy.
+No metre coordinates or calibrated camera are certified by this check.
+
+Use `python -m tools.vision_qc.evaluate_landmarks --bundle RUN/bundle --data DATA.yaml
+--split val --out NEW_DIR` to measure PCK at 3/5/10 **original-image pixels**.
+Missing object detections and low-confidence points remain misses in the PCK
+denominator. Unsupported IDs return null rather than an invented score.
+Object-matched coordinate errors and unfiltered PCK are diagnostic supplements.
+The contact sheet uses yellow ground truth and cyan predictions.
+
+If upstream `best.pt` and `last.pt` differ, use `export_checkpoint` to validate
+and export the second checkpoint, then evaluate both on validation only. For the
+bounded landmark recovery experiment, select by validation PCK@5, then PCK@10,
+then median pixel error; use later epoch as a final tie-breaker. Record both
+results and the chosen checkpoint. This is model selection on a tiny source
+validation set, not independent acceptance. Do not select checkpoints using test
+images. Detection continues to use the upstream source-validation fitness.
+

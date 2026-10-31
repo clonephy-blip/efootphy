@@ -165,6 +165,7 @@ def main():
     epochs_completed = int(model.trainer.epoch) + 1
     if not best.is_file(): raise RuntimeError('Training produced no best checkpoint')
     model = YOLO(best)
+    checkpoint_epoch = int(model.ckpt.get('epoch', -1)) + 1
     validation = model.val(data=str(prepared.resolve()), split='val', imgsz=spec['imgsz'],
                            device=args.device, batch=args.batch, workers=0, plots=True,
                            project=str(args.out.resolve()), name='validation')
@@ -186,6 +187,7 @@ def main():
                 'model_sha256': model_sha256,
                 'dataset_fingerprint': qc['dataset_fingerprint'], 'decoded_images': qc['decoded_images'],
                 'seed': 20261030, 'epochs_requested': args.epochs, 'epochs_completed': epochs_completed,
+                'checkpoint': 'best.pt', 'checkpoint_epoch': checkpoint_epoch,
                 'learning_rate': args.lr,
                 'training_seconds': control.seconds, 'training_budget_minutes': args.max_minutes,
                 'training_stop_reason': control.reason or 'upstream_early_stop_or_epochs',
