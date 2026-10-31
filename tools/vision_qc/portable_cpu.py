@@ -5,6 +5,7 @@ conversion/serialization changes. Normal GPU/CPU training uses upstream trainers
 """
 import copy
 import datetime
+import shutil
 from pathlib import Path
 
 
@@ -39,17 +40,24 @@ def trainer_class(task):
         def save_model(self):
             checkpoint = {
                 'epoch': self.epoch, 'best_fitness': self.best_fitness, 'model': None,
-                'ema': copy.deepcopy(self.ema.ema).float(), 'updates': self.ema.updates,
+                'ema': copy.deepcopy(self.ema.ema).float().to(memory_format=torch.contiguous_format), 'updates': self.ema.updates,
                 'optimizer': copy.deepcopy(self.optimizer.state_dict()),
+                'scaler': self.scaler.state_dict(),
                 'train_args': vars(self.args), 'train_metrics': {**self.metrics, 'fitness': self.fitness},
                 'train_results': self.read_results_csv(), 'date': datetime.datetime.now().isoformat(),
                 'version': ultralytics.__version__, 'license': 'AGPL-3.0',
                 'docs': 'https://docs.ultralytics.com', 'portable_fp32_checkpoint': True,
             }
-            torch.save(checkpoint, self.last)
-            if self.best_fitness == self.fitness: torch.save(checkpoint, self.best)
+            temporary = self.last.with_suffix('.pt.tmp')
+            torch.save(checkpoint, temporary)
+            temporary.replace(self.last)
+            if self.best_fitness == self.fitness:
+                temporary = self.best.with_suffix('.pt.tmp')
+                shutil.copyfile(self.last, temporary)
+                temporary.replace(self.best)
             if self.save_period > 0 and self.epoch % self.save_period == 0:
                 torch.save(checkpoint, self.wdir / f'epoch{self.epoch}.pt')
+            return True
 
         def final_eval(self):
             # Upstream strip_optimizer casts to FP16. The caller independently validates best.pt.
