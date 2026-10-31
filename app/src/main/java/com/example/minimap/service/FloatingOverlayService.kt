@@ -35,7 +35,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.example.minimap.processor.AutoFormationAnalysis
-import com.example.minimap.processor.ScreenMode
 import com.example.minimap.processor.TacticalAnalyzer
 import com.example.minimap.processor.TacticalResult
 import com.example.minimap.ui.CaptureConsentActivity
@@ -67,19 +66,17 @@ class FloatingOverlayService : Service() {
     private lateinit var capture: ScreenCaptureManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private val analyzer = TacticalAnalyzer()
-
     private val latestFrameResult = AtomicReference<TacticalResult?>(null)
 
     private var controlPod: LinearLayout? = null
     private var mainToggleBtn: TextView? = null
-    private var subActionBtn: TextView? = null
+    private var scanFormationBtn: TextView? = null
+    private var flipDirBtn: TextView? = null
     private var drawingLayer: RealTimeArHudView? = null
 
     private var captureActive = false
     private var destroyed = false
-    private var lastDisplayedDirection: Boolean? = null
-    private var lastScreenMode: Int = ScreenMode.MODE_LIVE_MATCH
-    @Volatile private var hideFormationOverlayManually = false
+    private var lastDirState: Boolean? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -102,25 +99,17 @@ class FloatingOverlayService : Service() {
                 latestFrameResult.set(result)
                 drawingLayer?.postInvalidateOnAnimation()
 
-                if (result.attackLeftToRight != lastDisplayedDirection || result.screenMode != lastScreenMode) {
-                    lastDisplayedDirection = result.attackLeftToRight
-                    lastScreenMode = result.screenMode
-                    if (result.screenMode == ScreenMode.MODE_LIVE_MATCH) {
-                        hideFormationOverlayManually = false
-                    }
+                if (result.attackLeftToRight != lastDirState) {
+                    lastDirState = result.attackLeftToRight
                     mainHandler.post {
-                        if (!destroyed && captureActive) {
-                            updatePodLabels()
-                        }
+                        if (!destroyed && captureActive) updatePodLabels()
                     }
                 }
             },
             onState = { running ->
                 if (!destroyed) {
                     captureActive = running
-                    if (!running) {
-                        latestFrameResult.set(null)
-                    }
+                    if (!running) latestFrameResult.set(null)
                     updatePodLabels()
                     drawingLayer?.visibility = if (running) View.VISIBLE else View.GONE
                     updateForeground(running)
@@ -128,7 +117,7 @@ class FloatingOverlayService : Service() {
             },
             onError = { error ->
                 Log.e("Minimap", "Capture error", error)
-                Toast.makeText(this, "Chạm nút AR để cấp lại quyền màn hình.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Chạm nút BẬT 60FPS để cấp lại quyền.", Toast.LENGTH_SHORT).show()
             },
             scanFps = 60
         )
@@ -137,19 +126,18 @@ class FloatingOverlayService : Service() {
     private fun updatePodLabels() {
         if (!captureActive) {
             mainToggleBtn?.text = "BẬT 60FPS"
-            subActionBtn?.visibility = View.GONE
+            scanFormationBtn?.visibility = View.GONE
+            flipDirBtn?.visibility = View.GONE
             return
         }
-        val arrow = if (analyzer.attackLeftToRight) "→" else "←"
-        val modePrefix = if (analyzer.manualDirectionLock) "KHÓA" else "AUTO"
-        mainToggleBtn?.text = "$modePrefix $arrow"
+        mainToggleBtn?.text = "⏹ TẮT"
+        scanFormationBtn?.visibility = View.VISIBLE
+        flipDirBtn?.visibility = View.VISIBLE
 
-        if (lastScreenMode == ScreenMode.MODE_GAMEPLAN_FORMATION) {
-            subActionBtn?.visibility = View.VISIBLE
-            subActionBtn?.text = if (hideFormationOverlayManually) "👁 HIỆN SƠ ĐỒ" else "✖ ẨN SƠ ĐỒ"
-        } else {
-            subActionBtn?.visibility = View.GONE
-        }
+        val arrow = if (analyzer.attackLeftToRight) "→" else "←"
+        val mode = if (analyzer.manualDirectionLock) "CÔNG" else "AUTO"
+        flipDirBtn?.text = "⇄ $mode $arrow"
+        scanFormationBtn?.text = if (analyzer.isFormationScanActive()) "✖ ĐÓNG SƠ ĐỒ" else "🔍 SƠ ĐỒ"
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -195,17 +183,15 @@ class FloatingOverlayService : Service() {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            ).apply {
-                alpha = 0.78f
-            }
+            ).apply { alpha = 0.78f }
         )
 
         val pod = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
-                cornerRadius = dp(12).toFloat()
-                setColor(Color.argb(210, 15, 23, 42))
-                setStroke(dp(1), Color.rgb(56, 189, 248))
+                cornerRadius = dp(10).toFloat()
+                setColor(Color.argb(215, 15, 23, 42))
+                setStroke(dp(1), Color.rgb(100, 116, 139))
             }
             setPadding(dp(5), dp(5), dp(5), dp(5))
         }
@@ -213,16 +199,17 @@ class FloatingOverlayService : Service() {
         val btnMain = TextView(this).apply {
             text = "BẬT 60FPS"
             gravity = Gravity.CENTER
-            textSize = 11f
+            textSize = 10f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.WHITE)
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setPadding(dp(8), dp(5), dp(8), dp(5))
             background = GradientDrawable().apply {
-                cornerRadius = dp(8).toFloat()
+                cornerRadius = dp(7).toFloat()
                 setColor(Color.rgb(16, 185, 129))
             }
             setOnClickListener {
                 if (captureActive) {
+                    analyzer.clearFormationScan()
                     capture.stop()
                 } else {
                     startActivity(
@@ -231,26 +218,19 @@ class FloatingOverlayService : Service() {
                     )
                 }
             }
-            setOnLongClickListener {
-                analyzer.toggleManualDirection()
-                updatePodLabels()
-                val dirText = if (analyzer.attackLeftToRight) "Trái sang Phải (→)" else "Phải sang Trái (←)"
-                Toast.makeText(this@FloatingOverlayService, "Đã khóa hướng thủ công: $dirText", Toast.LENGTH_SHORT).show()
-                true
-            }
         }
         mainToggleBtn = btnMain
 
-        val btnSub = TextView(this).apply {
-            text = "✖ ẨN SƠ ĐỒ"
+        val btnScan = TextView(this).apply {
+            text = "🔍 SƠ ĐỒ"
             gravity = Gravity.CENTER
             textSize = 10f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.BLACK)
             visibility = View.GONE
-            setPadding(dp(6), dp(5), dp(6), dp(5))
+            setPadding(dp(8), dp(5), dp(8), dp(5))
             background = GradientDrawable().apply {
-                cornerRadius = dp(8).toFloat()
+                cornerRadius = dp(7).toFloat()
                 setColor(Color.rgb(250, 204, 21))
             }
             layoutParams = LinearLayout.LayoutParams(
@@ -258,22 +238,51 @@ class FloatingOverlayService : Service() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(4) }
             setOnClickListener {
-                hideFormationOverlayManually = !hideFormationOverlayManually
+                if (analyzer.isFormationScanActive()) {
+                    analyzer.clearFormationScan()
+                } else {
+                    analyzer.triggerManualFormationScan()
+                }
                 updatePodLabels()
                 drawingLayer?.postInvalidateOnAnimation()
             }
         }
-        subActionBtn = btnSub
+        scanFormationBtn = btnScan
+
+        val btnDir = TextView(this).apply {
+            text = "⇄ AUTO →"
+            gravity = Gravity.CENTER
+            textSize = 10f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            visibility = View.GONE
+            setPadding(dp(8), dp(5), dp(8), dp(5))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(7).toFloat()
+                setColor(Color.rgb(51, 65, 85))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(4) }
+            setOnClickListener {
+                analyzer.toggleManualDirection()
+                updatePodLabels()
+                drawingLayer?.postInvalidateOnAnimation()
+            }
+        }
+        flipDirBtn = btnDir
 
         pod.addView(btnMain)
-        pod.addView(btnSub)
+        pod.addView(btnScan)
+        pod.addView(btnDir)
         controlPod = pod
 
         val lp = params(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        ).apply { x = dp(14); y = dp(85) }
+        ).apply { x = dp(12); y = dp(90) }
 
         val slop = ViewConfiguration.get(this).scaledTouchSlop
         var downX = 0f
@@ -281,30 +290,21 @@ class FloatingOverlayService : Service() {
         var originX = 0
         var originY = 0
         var dragging = false
-        var longTriggered = false
-        val longRunnable = Runnable {
-            if (!dragging) {
-                longTriggered = true
-                btnMain.performLongClick()
-            }
-        }
 
         btnMain.setOnTouchListener { view, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = event.rawX; downY = event.rawY
-                    originX = lp.x; originY = lp.y
-                    dragging = false; longTriggered = false
-                    mainHandler.postDelayed(longRunnable, ViewConfiguration.getLongPressTimeout().toLong())
+                    downX = event.rawX
+                    downY = event.rawY
+                    originX = lp.x
+                    originY = lp.y
+                    dragging = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - downX
                     val dy = event.rawY - downY
-                    if (abs(dx) > slop || abs(dy) > slop) {
-                        dragging = true
-                        mainHandler.removeCallbacks(longRunnable)
-                    }
+                    if (abs(dx) > slop || abs(dy) > slop) dragging = true
                     if (dragging) {
                         lp.x = originX + dx.roundToInt()
                         lp.y = originY + dy.roundToInt()
@@ -314,12 +314,7 @@ class FloatingOverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    mainHandler.removeCallbacks(longRunnable)
-                    if (!dragging && !longTriggered) view.performClick()
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    mainHandler.removeCallbacks(longRunnable)
+                    if (!dragging) view.performClick()
                     true
                 }
                 else -> false
@@ -340,8 +335,8 @@ class FloatingOverlayService : Service() {
             val bounds = windows.maximumWindowMetrics.bounds
             size.set(bounds.width(), bounds.height())
         } else windows.defaultDisplay.getSize(size)
-        lp.x = lp.x.coerceIn(0, (size.x - dp(75)).coerceAtLeast(0))
-        lp.y = lp.y.coerceIn(0, (size.y - dp(85)).coerceAtLeast(0))
+        lp.x = lp.x.coerceIn(0, (size.x - dp(80)).coerceAtLeast(0))
+        lp.y = lp.y.coerceIn(0, (size.y - dp(110)).coerceAtLeast(0))
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -394,53 +389,49 @@ class FloatingOverlayService : Service() {
         super.onDestroy()
     }
 
+    // Lớp vẽ 60FPS: Dùng bảng màu KHÔNG TRÙNG với màu Cyan của con trỏ game để tránh tự nuốt hình vẽ!
     private inner class RealTimeArHudView(context: Context) : View(context) {
         private val roiRect = RectF()
         private val cardRect = RectF()
 
+        // Dùng màu Vàng Cam cho vòng tròn chân cầu thủ (Không dùng màu Cyan để tránh tự quét lại chính mình)
         private val footRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = dp(2).toFloat()
-            color = Color.CYAN
+            color = Color.rgb(255, 195, 0)
         }
-        private val throughLaserPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val primaryPassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = dp(3).toFloat()
-            color = Color.rgb(0, 255, 128)
+            color = Color.rgb(0, 255, 110)
         }
-        private val safePassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val secondaryPassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = dp(2).toFloat()
-            color = Color.rgb(250, 204, 21)
-            pathEffect = DashPathEffect(floatArrayOf(14f, 8f), 0f)
+            color = Color.rgb(255, 215, 0)
+            pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f)
         }
-        private val landingZoneFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val landingFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
-            color = Color.argb(70, 0, 255, 128)
+            color = Color.argb(60, 0, 255, 110)
         }
-        private val dangerRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val weakZonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = dp(3).toFloat()
-            color = Color.rgb(255, 55, 55)
+            color = Color.rgb(255, 60, 60)
         }
-        private val minimapFramePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val minimapBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = dp(1).toFloat()
-            color = Color.argb(130, 56, 189, 248)
+            color = Color.argb(120, 255, 215, 0)
         }
-        private val offsideLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(2).toFloat()
-            color = Color.YELLOW
-            pathEffect = DashPathEffect(floatArrayOf(8f, 6f), 0f)
-        }
-        private val tagTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = dp(12).toFloat()
             color = Color.WHITE
             typeface = Typeface.DEFAULT_BOLD
             setShadowLayer(4f, 0f, 0f, Color.BLACK)
         }
-        private val modalBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val panelBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
             color = Color.argb(225, 15, 23, 42)
         }
@@ -453,129 +444,95 @@ class FloatingOverlayService : Service() {
 
             val res = latestFrameResult.get() ?: return
 
-            if (res.screenMode == ScreenMode.MODE_GAMEPLAN_FORMATION && !hideFormationOverlayManually) {
-                res.autoFormation?.let { report ->
-                    drawAutoFormationScanner(canvas, w, h, report)
-                    return
-                }
+            // 1. NẾU ĐANG BẬT QUÉT SƠ ĐỒ ĐỐI THỦ (MẢNG 1)
+            res.autoFormation?.let { report ->
+                drawFormationReport(canvas, w, h, report)
+                return
             }
 
+            // 2. VẼ VIỀN NGOÀI MINIMAP (Không vẽ bất cứ nét nào vào bên trong lòng Minimap để chống nhiễu 100%)
             roiRect.set(w * roiLeftRatio, h * roiTopRatio, w * roiRightRatio, h * roiBottomRatio)
-            canvas.drawRect(roiRect, minimapFramePaint)
-
+            canvas.drawRect(roiRect, minimapBorderPaint)
             val offX = roiRect.left + res.offsideLineX * roiRect.width()
-            canvas.drawLine(offX, roiRect.top, offX, roiRect.bottom, offsideLinePaint)
+            // Chỉ vẽ 2 vạch nhỏ báo việt vị ở mép ngoài phía trên và phía dưới khung Minimap
+            canvas.drawLine(offX, roiRect.top - dp(6), offX, roiRect.top, secondaryPassPaint)
+            canvas.drawLine(offX, roiRect.bottom, offX, roiRect.bottom + dp(6), secondaryPassPaint)
 
-            res.minimapBestPass?.let { (fromMap, toMap) ->
-                val mx1 = roiRect.left + fromMap.x * roiRect.width()
-                val my1 = roiRect.top + fromMap.y * roiRect.height()
-                val mx2 = roiRect.left + toMap.x * roiRect.width()
-                val my2 = roiRect.top + toMap.y * roiRect.height()
-                drawCleanArrow(canvas, mx1, my1, mx2, my2, throughLaserPaint)
-            }
+            // 3. VẼ VÒNG TRÒN DƯỚI CHÂN CẦU THỦ ĐANG CẦM BÓNG & TIA LASER ĐƯỜNG CHUYỀN TRÊN SÂN 3D
+            val foot = res.controlledFoot3D ?: return
+            val fx = foot.x * w
+            val fy = foot.y * h
 
-            res.controlledFoot3D?.let { foot ->
-                val fx = foot.x * w
-                val fy = foot.y * h
-                canvas.save()
-                canvas.scale(1f, 0.52f, fx, fy)
-                canvas.drawCircle(fx, fy, dp(22).toFloat(), footRingPaint)
-                canvas.restore()
-            }
+            canvas.save()
+            canvas.scale(1f, 0.52f, fx, fy)
+            canvas.drawCircle(fx, fy, dp(20).toFloat(), footRingPaint)
+            canvas.restore()
 
             res.pitch3DOptions.forEachIndexed { idx, opt ->
                 val sx = opt.from3DX * w
                 val sy = opt.from3DY * h
                 val ex = opt.to3DX * w
                 val ey = opt.to3DY * h
+                val paint = if (idx == 0) primaryPassPaint else secondaryPassPaint
 
-                val paint = if (idx == 0) throughLaserPaint else safePassPaint
-                drawCleanArrow(canvas, sx, sy, ex, ey, paint)
+                if (opt.isOffScreen) {
+                    // Đồng đội ở ngoài khung hình Camera: Vẽ mũi tên la bàn ngắn (55dp) ngay trước chân cầu thủ chỉ hướng gạt cần!
+                    val angle = atan2((ey - sy).toDouble(), (ex - sx).toDouble())
+                    val pointerLen = dp(58).toFloat()
+                    val px = sx + (pointerLen * cos(angle)).toFloat()
+                    val py = sy + (pointerLen * sin(angle)).toFloat()
+                    drawArrow(canvas, sx, sy, px, py, paint)
+                    textPaint.color = Color.rgb(250, 204, 21)
+                    canvas.drawText("🚀 PHẤT DÀI (${opt.openSpacePct}%)", px - dp(35), py - dp(8), textPaint)
+                } else {
+                    // Đồng đội đang ở ngay trong khung hình Sân 3D: Nối thẳng Tia Laser tới chân đồng đội!
+                    drawArrow(canvas, sx, sy, ex, ey, paint)
+                    canvas.save()
+                    canvas.scale(1f, 0.52f, ex, ey)
+                    if (idx == 0) canvas.drawCircle(ex, ey, dp(22).toFloat(), landingFillPaint)
+                    canvas.drawCircle(ex, ey, dp(22).toFloat(), paint)
+                    canvas.restore()
 
-                canvas.save()
-                canvas.scale(1f, 0.52f, ex, ey)
-                if (idx == 0) {
-                    canvas.drawCircle(ex, ey, dp(26).toFloat(), landingZoneFillPaint)
+                    val tag = if (opt.isThroughRun) "⚡ CHỌC KHE (${opt.openSpacePct}%)" else "✔ CHUYỀN (${opt.openSpacePct}%)"
+                    textPaint.color = if (idx == 0) Color.rgb(167, 243, 208) else Color.YELLOW
+                    canvas.drawText(tag, (ex - dp(35)).coerceIn(dp(10).toFloat(), w - dp(130)), (ey - dp(14)).coerceAtLeast(dp(28).toFloat()), textPaint)
                 }
-                canvas.drawCircle(ex, ey, dp(26).toFloat(), paint)
-                canvas.restore()
-
-                val label = when {
-                    opt.isOffScreen -> ">>> CÁNH TRỐNG (${opt.openSpacePct}%)"
-                    opt.isThroughRun -> "⚡ CHỌC KHE (${opt.openSpacePct}%)"
-                    else -> "✔ (${opt.openSpacePct}%)"
-                }
-                tagTextPaint.color = if (idx == 0) Color.rgb(167, 243, 208) else Color.YELLOW
-                canvas.drawText(label, (ex - dp(38)).coerceIn(dp(10).toFloat(), w - dp(130)), (ey - dp(16)).coerceAtLeast(dp(24).toFloat()), tagTextPaint)
-            }
-
-            res.dangerRunner3D?.let { danger ->
-                val dx = danger.x * w
-                val dy = danger.y * h
-                canvas.save()
-                canvas.scale(1f, 0.52f, dx, dy)
-                canvas.drawCircle(dx, dy, dp(28).toFloat(), dangerRingPaint)
-                canvas.restore()
-                tagTextPaint.color = Color.rgb(255, 100, 100)
-                canvas.drawText("⚠ BỌC LÓT!", dx - dp(32), dy - dp(18), tagTextPaint)
             }
         }
 
-        private fun drawAutoFormationScanner(
-            canvas: Canvas,
-            w: Float,
-            h: Float,
-            report: AutoFormationAnalysis
-        ) {
-            if (report.isWaitingForOpponentView) {
-                cardRect.set(w * 0.22f, dp(10).toFloat(), w * 0.78f, dp(52).toFloat())
-                canvas.drawRoundRect(cardRect, dp(10).toFloat(), dp(10).toFloat(), modalBgPaint)
-                canvas.drawRoundRect(cardRect, dp(10).toFloat(), dp(10).toFloat(), footRingPaint)
-                tagTextPaint.color = Color.CYAN
-                canvas.drawText(
-                    "👁 MẢNG 1 TỰ ĐỘNG: Hãy bấm xem Sơ đồ Đối thủ 1 giây để AI quét tử huyệt!",
-                    cardRect.left + dp(14),
-                    cardRect.centerY() + dp(5),
-                    tagTextPaint
-                )
-                return
-            }
-
+        private fun drawFormationReport(canvas: Canvas, w: Float, h: Float, report: AutoFormationAnalysis) {
             for (card in report.detectedPlayerCards) {
                 canvas.drawCircle(card.x * w, card.y * h, dp(14).toFloat(), footRingPaint)
             }
-
             for (weak in report.weakZoneSpots) {
                 val wx = weak.x * w
                 val wy = weak.y * h
-                canvas.drawCircle(wx, wy, dp(40).toFloat(), dangerRingPaint)
-                tagTextPaint.color = Color.YELLOW
-                canvas.drawText("🎯 KHOÉT VÙNG NÀY", wx - dp(52), wy + dp(5), tagTextPaint)
+                canvas.drawCircle(wx, wy, dp(38).toFloat(), weakZonePaint)
+                textPaint.color = Color.YELLOW
+                canvas.drawText("🎯 LỖ HỔNG", wx - dp(36), wy + dp(5), textPaint)
             }
 
-            cardRect.set(w * 0.18f, dp(10).toFloat(), w * 0.86f, dp(105).toFloat())
-            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), modalBgPaint)
-            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), throughLaserPaint)
+            cardRect.set(w * 0.16f, dp(10).toFloat(), w * 0.86f, dp(104).toFloat())
+            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), panelBgPaint)
+            canvas.drawRoundRect(cardRect, dp(12).toFloat(), dp(12).toFloat(), primaryPassPaint)
 
             var ty = cardRect.top + dp(24)
             val lx = cardRect.left + dp(14)
 
-            tagTextPaint.color = Color.rgb(56, 189, 248)
-            canvas.drawText("🤖 SƠ ĐỒ ĐỐI THỦ: ${report.detectedFormation}", lx, ty, tagTextPaint)
-
+            textPaint.color = Color.rgb(56, 189, 248)
+            canvas.drawText("🤖 SƠ ĐỒ ĐỐI THỦ: ${report.detectedFormation}", lx, ty, textPaint)
             ty += dp(22)
-            tagTextPaint.color = Color.rgb(250, 204, 21)
-            canvas.drawText("🔥 TỬ HUYỆT: ${report.tacticalWeakness}", lx, ty, tagTextPaint)
-
+            textPaint.color = Color.rgb(250, 204, 21)
+            canvas.drawText("🔥 TỬ HUYỆT: ${report.tacticalWeakness}", lx, ty, textPaint)
             ty += dp(22)
-            tagTextPaint.color = Color.WHITE
-            canvas.drawText("💡 ${report.actionableAdvice}", lx, ty, tagTextPaint)
+            textPaint.color = Color.WHITE
+            canvas.drawText("💡 ${report.actionableAdvice}", lx, ty, textPaint)
         }
 
-        private fun drawCleanArrow(canvas: Canvas, sx: Float, sy: Float, ex: Float, ey: Float, paint: Paint) {
+        private fun drawArrow(canvas: Canvas, sx: Float, sy: Float, ex: Float, ey: Float, paint: Paint) {
             canvas.drawLine(sx, sy, ex, ey, paint)
             val angle = atan2((ey - sy).toDouble(), (ex - sx).toDouble())
-            val head = dp(11).toFloat()
+            val head = dp(10).toFloat()
             val a1 = angle - Math.PI / 6
             val a2 = angle + Math.PI / 6
             canvas.drawLine(ex, ey, (ex - head * cos(a1)).toFloat(), (ey - head * sin(a1)).toFloat(), paint)
