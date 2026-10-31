@@ -4,6 +4,7 @@ import android.graphics.PointF
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 
 data class Pitch3DPassOption(
     val from3DX: Float,
@@ -66,6 +67,7 @@ class TacticalAnalyzer {
     private var preferWideFlankPass: Boolean = false
     private var preferHalfSpacePass: Boolean = false
 
+    // Đầy đủ 4 hàm điều khiển mà FloatingOverlayService.kt đang gọi
     fun toggleManualDirection() {
         manualDirectionLock = true
         attackLeftToRight = !attackLeftToRight
@@ -80,10 +82,12 @@ class TacticalAnalyzer {
         activeFormationReport = null
     }
 
-    fun isFormationScanActive(): Boolean = activeFormationReport != null || requestFormationScan
+    fun isFormationScanActive(): Boolean {
+        return activeFormationReport != null || requestFormationScan
+    }
 
     fun analyze(frame: RgbaFrame): TacticalResult {
-        // 1. NẾU NGƯỜI DÙNG BẤM NÚT "🔍 SƠ ĐỒ" -> QUÉT SƠ ĐỒ ĐỐI THỦ NGAY LẬP TỨC
+        // 1. Khi người dùng bấm nút "🔍 SƠ ĐỒ" -> Quét sơ đồ đối thủ trên màn hình ngay lập tức
         if (requestFormationScan && frame.gridW > 20 && frame.gridH > 20) {
             requestFormationScan = false
             activeFormationReport = scanGamePlanScreen(frame.gridPixels, frame.gridW, frame.gridH)
@@ -101,11 +105,11 @@ class TacticalAnalyzer {
             )
         }
 
-        // 2. CẬP NHẬT TỌA ĐỘ BÀN CHÂN CẦU THỦ ĐANG ĐIỀU KHIỂN TRÊN SÂN 3D (Xóa ngay nếu màn hình đen/mất dấu > 4 frame)
-        if (frame.controlled3DX >= 0f && frame.controlled3DY >= 0f) {
+        // 2. Quét trực tiếp lưới Sân 3D để bắt Tam giác Xanh Ngọc nằm ngay dưới Thanh Thể Lực Đen (Loại bỏ bảng LED khán đài)
+        val detectedFoot = detectPlayerFootWithStaminaBox(frame.gridPixels, frame.gridW, frame.gridH)
+        if (detectedFoot != null) {
             missed3DFootFrames = 0
-            val rawPt = PointF(frame.controlled3DX, frame.controlled3DY)
-            smoothedFoot3D = smoothPoint(smoothedFoot3D, rawPt, alpha = 0.60f)
+            smoothedFoot3D = smoothPoint(smoothedFoot3D, detectedFoot, alpha = 0.62f)
         } else {
             missed3DFootFrames++
             if (missed3DFootFrames > 4) {
@@ -114,7 +118,7 @@ class TacticalAnalyzer {
         }
         val currentFoot3D = smoothedFoot3D
 
-        // 3. QUÉT MINIMAP ĐỘ CHÍNH XÁC CAO (Lòng Minimap nay đã sạch 100%, không bị vẽ đè)
+        // 3. Quét Minimap bằng bộ lọc Đỉnh cục bộ (Local Peak)
         val w = frame.width
         val h = frame.height
         val bytes = frame.pixels
@@ -204,7 +208,6 @@ class TacticalAnalyzer {
         updateKalmanTracks(homeRaw)
         val offsideX = computeOffsideLine(awayRaw)
 
-        // Khóa gốc người cầm bóng trên Minimap: Ưu tiên chấm Xanh Ngọc (cầu thủ đang điều khiển)
         val carrierMap = activeCursorDot ?: ballYellowDot ?: homeRaw.minByOrNull {
             hypot(it.x - currentFoot3D.x, it.y - currentFoot3D.y)
         }
@@ -228,6 +231,53 @@ class TacticalAnalyzer {
         )
     }
 
+    // Bắt chính xác Tam giác con trỏ Xanh Ngọc có hộp Thanh Thể Lực Đen nằm ngay phía trên (Bỏ qua bảng LED khán đài y < 0.23)
+    private fun detectPlayerFootWithStaminaBox(gridPixels: ByteArray, gW: Int, gH: Int): PointF? {
+        if (gW <= 20 || gH <= 20 || gridPixels.size < gW * gH * 4) return null
+
+        val minPlayY = (gH * 0.23f).toInt().coerceAtLeast(2)
+        val maxPlayY = (gH * 0.77f).toInt().coerceAtMost(gH - 2)
+        val minPlayX = (gW * 0.12f).toInt().coerceAtLeast(2)
+        val maxPlayX = (gW * 0.88f).toInt().coerceAtMost(gW - 2)
+
+        var sumX = 0f
+        var sumY = 0f
+        var hits = 0
+
+        for (gy in minPlayY..maxPlayY) {
+            val rowOff = gy * gW
+            for (gx in minPlayX..maxPlayX) {
+                val idx = (rowOff + gx) * 4
+                val r = gridPixels[idx].toInt() and 0xFF
+                val g = gridPixels[idx + 1].toInt() and 0xFF
+                val b = gridPixels[idx + 2].toInt() and 0xFF
+
+                if (r < 55 && g > 210 && b > 210) {
+                    val up1 = ((gy - 1) * gW + gx) * 4
+                    val up2 = ((gy - 2) * gW + gx) * 4
+                    val r1 = gridPixels[up1].toInt() and 0xFF
+                    val g1 = gridPixels[up1 + 1].toInt() and 0xFF
+                    val b1 = gridPixels[up1 + 2].toInt() and 0xFF
+                    val r2 = gridPixels[up2].toInt() and 0xFF
+                    val g2 = gridPixels[up2 + 1].toInt() and 0xFF
+                    val b2 = gridPixels[up2 + 2].toInt() and 0xFF
+
+                    val hasDarkStaminaBar = (r1 < 48 && g1 < 48 && b1 < 48) || (r2 < 48 && g2 < 48 && b2 < 48)
+                    if (hasDarkStaminaBar) {
+                        sumX += gx.toFloat() / gW
+                        sumY += gy.toFloat() / gH
+                        hits++
+                    }
+                }
+            }
+        }
+
+        if (hits < 1) return null
+        val footX = (sumX / hits).coerceIn(0.08f, 0.92f)
+        val footY = ((sumY / hits) + 0.068f).coerceIn(0.24f, 0.85f)
+        return PointF(footX, footY)
+    }
+
     private fun computeAccurate3DPasses(
         anchor3D: PointF,
         carrierMap: PointF?,
@@ -242,10 +292,8 @@ class TacticalAnalyzer {
         for (t in homeTracks) {
             if (t.missedFrames > 2) continue
             val distMap = hypot(t.x - carrierMap.x, t.y - carrierMap.y)
-            // Bỏ qua chính mình (< 0.055f) hoặc cầu thủ đứng quá xa (> 0.42f)
             if (distMap < 0.055f || distMap > 0.42f) continue
 
-            // Kiểm tra việt vị
             val isOffside = if (attackLeftToRight) {
                 t.x > offsideLineX + 0.015f && t.x > carrierMap.x
             } else {
@@ -266,7 +314,6 @@ class TacticalAnalyzer {
             if (clearance < 0.055f) continue
 
             val forwardGain = if (attackLeftToRight) (aimMapX - carrierMap.x) else (carrierMap.x - aimMapX)
-            // Chỉ gợi ý chuyền lên phía trước hoặc chuyền ngang mở biên thuận lợi (Không gợi ý chuyền ngược về sân nhà!)
             if (forwardGain < -0.02f) continue
 
             var bonus = if (isSprinting) 0.10f else 0f
@@ -276,7 +323,6 @@ class TacticalAnalyzer {
             val utility = forwardGain * 1.8f + clearance * 1.4f + bonus
             if (utility <= 0.05f) continue
 
-            // HỆ SỐ CHIẾU CHUẨN ĐO TỪ SÂN 3D THỰC TẾ (scaleY = 0.92f, scaleX = 2.15f)
             val dMapX = aimMapX - carrierMap.x
             val dMapY = aimMapY - carrierMap.y
 
@@ -284,7 +330,6 @@ class TacticalAnalyzer {
             val perspectiveX = 0.82f + 0.36f * raw3DY.coerceIn(0.20f, 0.85f)
             val raw3DX = anchor3D.x + dMapX * 2.15f * perspectiveX
 
-            // Nếu điểm rơi nằm trên khán đài (raw3DY < 0.24f) hoặc ngoài mép màn hình -> Đánh dấu isOffScreen để vẽ Mũi tên La bàn ngắn!
             val offScreen = raw3DX !in 0.08f..0.92f || raw3DY !in 0.24f..0.84f
             val openPct = ((clearance / 0.22f) * 100f).toInt().coerceIn(55, 99)
 
@@ -304,7 +349,6 @@ class TacticalAnalyzer {
             )
         }
 
-        // Chỉ hiển thị 1 ĐƯỜNG CHUYỀN TỐT NHẤT (và tối đa 1 đường phụ nếu cực kỳ trống trải) để không bao giờ bị rối mắt!
         return results.sortedByDescending { it.score }.take(1).map { it.opt }
     }
 
