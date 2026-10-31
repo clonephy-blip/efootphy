@@ -19,7 +19,7 @@ def score_points(target, predicted, detected, width, height, point_threshold=.5)
             continue
         finite=all(math.isfinite(x) for x in pred)
         inside=finite and 0<=pred[0]<=width and 0<=pred[1]<=height
-        confident=detected and inside and point_threshold<=pred[2]<=1
+        confident=bool(detected and inside and point_threshold<=pred[2]<=1)
         error=math.hypot(gt[0]-pred[0],gt[1]-pred[1]) if detected and finite else None
         records.append({'id':index,'error_px':error,'confident_in_image':confident,
             'pck':{str(r):bool(confident and error<=r) for r in [3,5,10]},
@@ -93,7 +93,7 @@ def main():
         scale,left,top,_,_=transform
         cx,cy,bw,bh=map(float,prediction[:4]);score=float(prediction[4])
         box=[(cx-bw/2-left)/scale,(cy-bh/2-top)/scale,(cx+bw/2-left)/scale,(cy+bh/2-top)/scale]
-        overlap=iou(box,target_box);detected=.25<=score<=1 and overlap>=.5
+        overlap=float(iou(box,target_box));detected=bool(.25<=score<=1 and overlap>=.5)
         predicted=prediction[5:].reshape(32,3).copy()
         predicted[:,0]=(predicted[:,0]-left)/scale;predicted[:,1]=(predicted[:,1]-top)/scale
         points=score_points(target,predicted,detected,width,height)

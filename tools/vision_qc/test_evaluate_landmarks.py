@@ -1,4 +1,6 @@
 import unittest
+import json
+import numpy as np
 
 from .evaluate_landmarks import aggregate,score_points
 
@@ -24,3 +26,8 @@ class LandmarkMetricTest(unittest.TestCase):
 
     def test_unsupported_keypoint_has_no_fabricated_zero_accuracy(self):
         s=aggregate([]);self.assertEqual(s['visible_ground_truth_points'],0);self.assertIsNone(s['pck']['5'])
+
+    def test_numpy_prediction_report_is_json_serializable(self):
+        s=aggregate(score_points(np.asarray(self.targets()),np.asarray(self.predictions(),dtype=np.float32),
+                                 np.bool_(True),640,640))
+        self.assertEqual(json.loads(json.dumps(s))['confident_in_image_points'],1)
