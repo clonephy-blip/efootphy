@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">NX Control Center</string>
+    <string name="accessibility_desc">Hiển thị bubble NX nhẹ khi mở app đã thêm vào Game Space.</string>
+</resources>
