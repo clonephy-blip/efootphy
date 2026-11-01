@@ -15,6 +15,8 @@ class RunControlTest(unittest.TestCase):
         self.clock_value=0
         self.trainer=types.SimpleNamespace(epoch=0,last=self.root/'last.pt',best=self.root/'best.pt',
                                            metrics={'pose':.1},stop=False)
+        self.trainer.ema=types.SimpleNamespace(updates=31)
+        self.trainer.accumulate=16;self.trainer.args=types.SimpleNamespace(nbs=64)
         self.patch=patch.dict('sys.modules',{'torch':types.SimpleNamespace(get_num_threads=lambda:4)})
         self.patch.start();self.addCleanup(self.patch.stop)
 
@@ -27,6 +29,9 @@ class RunControlTest(unittest.TestCase):
         self.assertTrue(self.trainer.stop)
         data=json.loads((self.root/'progress.json').read_text())
         self.assertEqual(data['epochs_completed'],2);self.assertTrue(data['last_checkpoint_present'])
+        self.assertEqual(data['optimizer_updates'],31)
+        self.assertEqual(data['gradient_accumulation'],16)
+        self.assertEqual(data['nominal_batch_size'],64)
         self.assertEqual(data['stop_reason'],'budget_next_epoch_estimate')
         self.assertFalse((self.root/'progress.json.tmp').exists())
 

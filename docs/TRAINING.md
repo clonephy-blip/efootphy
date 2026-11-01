@@ -42,6 +42,35 @@ Môi trường CPU đã chạy thành công được ghi ở `tools/vision_qc/re
 `tools/runtime_qc/OnnxParity.kt` kiểm tra cùng buffer FP32 little-endian qua Java ORT; dùng đúng phiên bản ORT trong app. So sánh này không đo Android Bitmap preprocessing hoặc tốc độ thiết bị.
 # Bounded field and landmark experiments
 
+Epoch counts are insufficient to describe optimization on a small dataset.
+The phase-2 15-epoch landmark checkpoint contains only 31 optimizer/EMA updates.
+The runner now records optimizer updates and current accumulation in progress
+and manifests. `--nominal-batch` exposes Ultralytics nbs (default remains 64).
+Record this alongside microbatch, LR and warmup when budgeting further runs.
+
+`python -m tools.vision_qc.pose_sanity --root REVIEWED_DATA --audit SOURCE_QC.json
+--selection TRAIN_IMAGES.json --weights SOURCE.pt --out NEW_DIR` runs a bounded,
+training-only memorization diagnostic. It verifies source image/label hashes,
+rejects validation/test selections, enables gradients on EMA-loaded weights,
+and reports pixel PCK, finite gradients and actual optimizer steps. The optional
+sigma refinement and BatchNorm controls affect training only; PCK thresholds
+stay fixed. A passing memorization test is never independent accuracy.
+
+`--head-only-cache` freezes all parameters except the pose cv4 branch and fixes
+BatchNorm moments. FPN features are cached only for these fixed training inputs.
+Full-network/cache parity is checked before and after optimization, frozen
+weights and BN buffers must remain unchanged. This accelerates training; live
+inference still computes the backbone for every new image. Debug weights are
+tagged non-release and must not replace the research/application baseline.
+
+`python -m tools.vision_qc.split_candidates --audit SOURCE_QC.json --groups
+GROUP_CANDIDATES.json --forbid-checkpoints SEEN_WEIGHTS.json --out NEW_PLAN.json`
+plans groups without moving source files. It merges exact-pixel links, quarantines
+unknown sources and any known component sharing their pixels, and never certifies
+source identity or class balance. The plan is not training-ready. After regrouping,
+old phase-2 weights have seen potential new holdouts; use fresh official pretrained
+initialization for an honest evaluation after review.
+
 `train.py` accepts `--max-minutes` and stops after a saved epoch when the next
 epoch would exceed the estimated budget. Setup, final validation and ONNX export
 are outside that estimate. `progress.json` records actual completed epochs,

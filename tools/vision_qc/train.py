@@ -81,6 +81,7 @@ def main():
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--patience', type=int, default=20)
     parser.add_argument('--batch', type=int, default=16)
+    parser.add_argument('--nominal-batch', type=int, default=64, help='Ultralytics nbs; controls gradient accumulation target')
     parser.add_argument('--lr', type=float, default=0.001, help='AdamW initial learning rate')
     parser.add_argument('--threads', type=int, default=4)
     parser.add_argument('--device', default='cpu')
@@ -92,7 +93,7 @@ def main():
     parser.add_argument('--no-plots', action='store_true', help='Skip optional upstream plotting; numeric validation is unchanged')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
-    if args.epochs < 1 or args.threads < 1 or args.batch < 1 or not 0 < args.lr <= 0.01:
+    if args.epochs < 1 or args.threads < 1 or args.batch < 1 or args.nominal_batch < 1 or not 0 < args.lr <= 0.01:
         parser.error('Positive epochs, threads and batch are required')
     if args.weights is not None and not args.weights.is_file():
         parser.error('Warm-start checkpoint does not exist')
@@ -155,7 +156,7 @@ def main():
     model.add_callback('on_fit_epoch_end', control.epoch_end)
     # Geometric augmentation is disabled for landmark ids until flip semantics are verified.
     result = model.train(trainer=trainer, data=str(prepared.resolve()), epochs=args.epochs, patience=args.patience,
-                         imgsz=spec['imgsz'], batch=args.batch, device=args.device, workers=0,
+                         imgsz=spec['imgsz'], batch=args.batch, nbs=args.nominal_batch, device=args.device, workers=0,
                          seed=20261030, deterministic=True, cache=False, optimizer='AdamW', mosaic=0.0, mixup=0.0,
                          lr0=args.lr, lrf=0.01, warmup_epochs=3.0, warmup_bias_lr=0.0,
                          fliplr=0.0 if spec['task'] == 'pose' else 0.5, flipud=0.0, degrees=0.0,
@@ -165,6 +166,8 @@ def main():
                          project=str(args.out.resolve()), name='run', exist_ok=False)
     best = Path(model.trainer.best)
     epochs_completed = int(model.trainer.epoch) + 1
+    optimizer_updates = int(model.trainer.ema.updates)
+    final_accumulation = int(model.trainer.accumulate)
     if not best.is_file(): raise RuntimeError('Training produced no best checkpoint')
     model = YOLO(best)
     checkpoint_epoch = int(model.ckpt.get('epoch', -1)) + 1
@@ -191,6 +194,8 @@ def main():
                 'seed': 20261030, 'epochs_requested': args.epochs, 'epochs_completed': epochs_completed,
                 'checkpoint': 'best.pt', 'checkpoint_epoch': checkpoint_epoch,
                 'learning_rate': args.lr,
+                'nominal_batch_size': args.nominal_batch, 'optimizer_updates': optimizer_updates,
+                'final_gradient_accumulation': final_accumulation,
                 'optional_plots_enabled': not args.no_plots,
                 'training_seconds': control.seconds, 'training_budget_minutes': args.max_minutes,
                 'training_stop_reason': control.reason or 'upstream_early_stop_or_epochs',
