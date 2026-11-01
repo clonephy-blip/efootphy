@@ -98,9 +98,15 @@ def main():
     p.add_argument('--views',type=int,default=1);p.add_argument('--threads',type=int,default=2)
     p.add_argument('--pseudo',type=Path);p.add_argument('--pseudo-root',type=Path)
     p.add_argument('--initial-head',type=Path)
+    p.add_argument('--feature-cache',type=Path,help='Reusable FP32 cache, keyed by encoder/runtime/exact image tensor')
+    p.add_argument('--teacher-proposals',type=Path,help='Completed train-only teacher_proposals report; experimental additional loss')
+    p.add_argument('--teacher-weight',type=float,default=0.)
+    p.add_argument('--teacher-unlabeled',action='store_true',help='Filtered teacher images have unknown base targets; do not train previous transferred labels')
     a=p.parse_args()
     if a.out.exists():raise ValueError('Use a new output directory')
-    if not 1<=a.views<=8 or not 1<=a.batch<=32 or a.steps<1 or not 0<a.max_minutes<=30:raise ValueError('Invalid budget')
+    if not 1<=a.views<=8 or not 1<=a.batch<=32 or a.steps<1 or not 0<a.max_minutes<=30 or not 0<=a.teacher_weight<=.5:raise ValueError('Invalid budget')
+    if a.teacher_weight and not a.teacher_proposals:raise ValueError('Teacher loss needs train-only proposals')
+    if a.teacher_unlabeled and not (a.teacher_proposals and a.pseudo):raise ValueError('Teacher-only samples need proposal and reference manifests')
     a.out.mkdir(parents=True);os.environ['ATEN_CPU_CAPABILITY']='default'
     import cv2
     import torch
@@ -114,11 +120,27 @@ def main():
     torch.set_num_threads(a.threads);torch.manual_seed(20261101);cv2.setNumThreads(1)
     torch.backends.nnpack.enabled=False;torch.backends.mkldnn.enabled=True
     rng=np.random.default_rng(20261101)
+    encoder_digest=hashlib.sha256(a.weights.read_bytes()).hexdigest();cache=None;cache_parity=None
+    initial_checkpoint=torch.load(a.initial_head,map_location='cpu',weights_only=True) if a.initial_head else None
+    if initial_checkpoint is not None and initial_checkpoint['encoder_sha256']!=encoder_digest:raise ValueError('Initial head belongs to a different encoder')
+    if a.feature_cache:
+        from .feature_cache import FeatureCache
+        cache=FeatureCache(a.feature_cache,encoder_digest,str(torch.__version__))
     encoder=YOLO(a.weights).model.float().eval()
     for param in encoder.parameters():param.requires_grad_(False)
     captured=[]
     hook=encoder.model[-1].register_forward_pre_hook(lambda _,args:captured.append([x.detach().clone() for x in args[0]]))
-    samples=[];validation=[];sources=[];generated=[]
+    samples=[];validation=[];sources=[];generated=[];teacher_by_hash={}
+    if a.teacher_proposals:
+        report=json.loads(a.teacher_proposals.read_text())
+        if report.get('completed') is not True or report.get('validation_labels_used') is not False or report.get('manual_ground_truth') is not False:
+            raise ValueError('Expected completed, train-only experimental teacher proposals')
+        if a.pseudo and report.get('review_sha256')!=hashlib.sha256(a.pseudo.read_bytes()).hexdigest():raise ValueError('Teacher/reference review mismatch')
+        for record in report['records']:
+            if record['target_split']!='train' or record['image_sha256'] in teacher_by_hash:raise ValueError('Invalid/duplicate teacher training entry')
+            teacher_by_hash[record['image_sha256']]=record
+        teacher_by_hash={k:v for k,v in teacher_by_hash.items() if any(p[2]==2 for p in v['teacher_points_640'])}
+        if a.teacher_weight and not teacher_by_hash:raise ValueError('No qualified teacher points; stop instead of running empty distillation')
     started=time.monotonic()
     source_paths=list(sorted((a.root/'train/images').glob('*.jpg')))
     for path in source_paths:
@@ -134,11 +156,19 @@ def main():
             if item['target_split']!='train':raise ValueError('Pseudo-label may only enter training')
             if item.get('review_status')!='approved_geometry_review':raise ValueError('Review geometric proposals before training')
             if hashlib.sha256(path.read_bytes()).hexdigest()!=item['image_sha256']:raise ValueError('Pseudo-image bytes changed')
-            sources.append((path,np.asarray(item['points'])*[.5,.5,1],True))
+            if a.teacher_unlabeled and item['image_sha256'] not in teacher_by_hash:continue
+            points=np.zeros((32,3)) if a.teacher_unlabeled else np.asarray(item['points'])*[.5,.5,1]
+            sources.append((path,points,True))
     def prepare(path,points,split,pseudo=False):
+        nonlocal cache_parity
         frame=cv2.imread(str(path))
         if frame is None or frame.shape[:2] not in [(640,640),(1280,1280)]:raise ValueError('Expected audited square source images')
         original=cv2.resize(frame,(640,640));small=cv2.resize(frame,(320,320))
+        teacher_points=np.zeros((32,3),np.float32);digest=hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest in teacher_by_hash:
+            if split!='train' or not pseudo:raise ValueError('Teacher proposals are restricted to reviewed pseudo train images')
+            teacher_points=np.asarray(teacher_by_hash[digest]['teacher_points_640'],np.float32)*[.5,.5,1]
+            if teacher_points.shape!=(32,3) or not np.isfinite(teacher_points).all():raise ValueError('Invalid teacher points')
         for view in range(a.views if split=='train' else 1):
             matrix=np.eye(3)
             if view:
@@ -150,10 +180,20 @@ def main():
             if view:
                 gain=rng.uniform(.85,1.15);image=np.clip(image.astype(np.float32)*gain+rng.uniform(-6,6),0,255).astype(np.uint8)
             tensor=torch.from_numpy(np.ascontiguousarray(image[:,:,::-1].transpose(2,0,1))).float()[None]/255
-            with torch.no_grad():encoder(tensor)
-            features=captured.pop();t=target.copy();t[:,:2]=t[:,:2]/4-.5
+            def compute():
+                with torch.no_grad():encoder(tensor)
+                return captured.pop()
+            if cache:
+                features,hit=cache.get(tensor,compute)
+                if hit and cache_parity is None:
+                    live=compute();cache_parity=max(float((a-b).abs().max()) for a,b in zip(live,features))
+                    if cache_parity>1e-6:raise ValueError('Frozen-feature cache parity failed')
+            else:features=compute()
+            t=target.copy();t[:,:2]=t[:,:2]/4-.5
+            teacher_target=transform_points(teacher_points,matrix,320);teacher_target[:,:2]=teacher_target[:,:2]/4-.5
             item={'path':str(path),'features':features,'rgb':tensor,'points':torch.tensor(t,dtype=torch.float32),
-                  'target':target*[2,2,1],'frame':original,'pseudo':pseudo,'view':view}
+                  'target':target*[2,2,1],'frame':original,'pseudo':pseudo,'view':view,
+                  'teacher_points':torch.tensor(teacher_target,dtype=torch.float32)}
             (samples if split=='train' else validation).append(item)
             if view:
                 generated_dir=a.out/'generated';generated_dir.mkdir(exist_ok=True)
@@ -170,10 +210,12 @@ def main():
         row=np.asarray(list(map(float,(path.parent.parent/'labels'/path.with_suffix('.txt').name).read_text().split())))
         prepare(path,row[5:].reshape(32,3)*[320,320,1],'valid')
     hook.remove()
+    used_teacher_hashes={hashlib.sha256(path.read_bytes()).hexdigest() for path,_,pseudo in sources if pseudo}
+    if teacher_by_hash.keys()-used_teacher_hashes:raise ValueError('Teacher report contains unconsumed training images')
     train_hashes={hashlib.sha256(x['frame'].tobytes()).hexdigest() for x in samples}
     if any(hashlib.sha256(x['frame'].tobytes()).hexdigest() in train_hashes for x in validation):raise ValueError('Train/validation duplicate pixels')
     head=make_head()
-    if a.initial_head:head.load_state_dict(torch.load(a.initial_head,map_location='cpu',weights_only=True)['head'])
+    if initial_checkpoint is not None:head.load_state_dict(initial_checkpoint['head'])
     optimizer=torch.optim.AdamW(head.parameters(),lr=.001,weight_decay=.0001)
     cache_seconds=time.monotonic()-started;history=[];step=0;order=[]
     def batch(items):
@@ -202,6 +244,9 @@ def main():
         chosen=order[:a.batch];order=order[a.batch:];subset=[samples[i] for i in chosen]
         head.train();features,rgb=batch(subset);points=torch.stack([x['points'] for x in subset])
         logits,vis=head(features,rgb);loss=supervised_loss(logits,vis,points,[x['pseudo'] for x in subset])
+        if a.teacher_weight:
+            teacher_points=torch.stack([x['teacher_points'] for x in subset])
+            loss=loss+a.teacher_weight*supervised_loss(logits,vis,teacher_points,[True]*len(subset))
         if not torch.isfinite(loss):raise RuntimeError('Non-finite loss')
         optimizer.zero_grad(set_to_none=True);loss.backward();torch.nn.utils.clip_grad_norm_(head.parameters(),10);optimizer.step()
         step+=1;last_loss=float(loss.detach())
@@ -212,12 +257,17 @@ def main():
     train_result=evaluate([x for x in samples if x['view']==0 and not x['pseudo']]);valid_result=evaluate(validation,a.out)
     report={'architecture':'frozen YOLO encoder + dense heatmaps with GroupNorm; no pitch detection gate',
             'scope':'source validation only; original 10 validation images excluded from all training views',
-            'encoder_sha256':hashlib.sha256(a.weights.read_bytes()).hexdigest(),'seed':20261101,
+            'encoder_sha256':encoder_digest,'seed':20261101,
             'source_dataset_fingerprint':qc['dataset_fingerprint'],'source_audit':qc,
             'optimizer_updates':step,'batch':a.batch,'gradient_accumulation':1,'source_train_images':len(source_paths),
             'pseudo_train_images':sum(x[2] for x in sources),'training_views':len(samples),'views_per_source':a.views,
             'cache_seconds':cache_seconds,'training_seconds':time.monotonic()-train_started,'stop_reason':reason,
             'history':history,'train':train_result,'validation':valid_result,
+            'initial_head_sha256':hashlib.sha256(a.initial_head.read_bytes()).hexdigest() if a.initial_head else None,
+            'teacher_weight':a.teacher_weight,'teacher_proposals_sha256':hashlib.sha256(a.teacher_proposals.read_bytes()).hexdigest() if a.teacher_proposals else None,
+            'pseudo_policy':'filtered_teacher_only_unknown_base_targets' if a.teacher_unlabeled else 'reviewed_transferred_points',
+            'teacher_original_points':sum(sum(p[2]==2 for p in r['teacher_points_640']) for r in teacher_by_hash.values()),
+            'feature_cache':{'hits':cache.hits,'misses':cache.misses,'reload_parity_max_abs':cache_parity,'precision':'FP32'} if cache else None,
             'point_threshold':.5,'coordinate_space':'640x640 source pixels','models_validated':False,'release_eligible':False,
             'validation_used_for_optimization_or_checkpoint_selection':False}
     torch.save({'head':head.state_dict(),'head_version':2,'encoder_sha256':report['encoder_sha256'],'architecture':report['architecture'],

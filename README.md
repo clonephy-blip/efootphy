@@ -34,6 +34,8 @@ Xem [quy trình](docs/TRAINING.md), [kiến trúc và giới hạn](docs/ARCHITE
 
 [Module tự dựng và bám sân](docs/PHASE5_2026-11-01.md) bổ sung teacher PnLCalib, optical flow có kiểm tra hình học, tìm lại sân bằng SIFT/XFeat và runner video có trạng thái `LOST`. Teacher đạt 37/92 mốc trong 5 pixel trên cùng validation nguồn; phép chiếu tự động đạt 12/21 mốc tham chiếu trên ba ảnh Mobile. SIFT + LK đạt 212/213 khung hợp lệ trong replay giả lập từ ảnh tĩnh; đây chưa phải tracking video trận đấu. XFeat CNN đã xuất ONNX và qua parity CPU; chưa được APK nhập hoặc chạy trên điện thoại.
 
+[Lượt tăng tốc và distillation](docs/PHASE6_2026-11-01.md) thêm cache đặc trưng FP32 có kiểm tra hash/parity, lọc teacher hai view trên train và cổng chặn hồi quy chất lượng. Hai lượt 600 update dùng đủ 93 ảnh nguồn; distillation đạt 15/92, đối chứng 14/92, nên giữ checkpoint 17/92. Chuẩn bị đặc trưng giảm 27,86 → 4,87 giây. Checkpoint giữ lại đã xuất ONNX 9,16 MB, giữ nguyên PCK trên 13 ảnh đối chiếu; bản nhỏ vẫn đạt 0/21 mốc Mobile trong 5 px nên chưa được đưa vào app.
+
 ```bash
 python -m pip install -r tools/vision_qc/requirements-qc.txt
 python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
