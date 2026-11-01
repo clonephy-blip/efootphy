@@ -1,0 +1,7 @@
+# Install the CPU Torch/torchvision versions from requirements-train-cpu.lock.txt first.
+-r requirements-qc.txt
+requests==2.34.2
+tqdm==4.67.1
+lsq-ellipse==2.2.1
+shapely==2.2.0
+# ONNX export/parity is optional; use the versions in requirements-train-cpu.lock.txt.

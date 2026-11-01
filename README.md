@@ -32,6 +32,8 @@ Xem [quy trình](docs/TRAINING.md), [kiến trúc và giới hạn](docs/ARCHITE
 
 [Thử nghiệm bản đồ nhiệt và chuyển nhãn](docs/PHASE4_2026-11-01.md) học lại trên toàn bộ 93 ảnh, tăng cường ảnh bằng biến đổi có nhãn đi kèm và rà đề xuất từ 2.319 ảnh field train. Đây là nhánh nghiên cứu riêng, dùng encoder cố định và head mới; chưa tích hợp vào Android. Báo cáo giữ cả đối chứng và kết quả train chéo kém hơn.
 
+[Module tự dựng và bám sân](docs/PHASE5_2026-11-01.md) bổ sung teacher PnLCalib, optical flow có kiểm tra hình học, tìm lại sân bằng SIFT/XFeat và runner video có trạng thái `LOST`. Teacher đạt 37/92 mốc trong 5 pixel trên cùng validation nguồn; phép chiếu tự động đạt 12/21 mốc tham chiếu trên ba ảnh Mobile. SIFT + LK đạt 212/213 khung hợp lệ trong replay giả lập từ ảnh tĩnh; đây chưa phải tracking video trận đấu. XFeat CNN đã xuất ONNX và qua parity CPU; chưa được APK nhập hoặc chạy trên điện thoại.
+
 ```bash
 python -m pip install -r tools/vision_qc/requirements-qc.txt
 python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
