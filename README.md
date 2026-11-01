@@ -28,6 +28,8 @@ Xem [quy trình](docs/TRAINING.md), [kiến trúc và giới hạn](docs/ARCHITE
 
 [Lượt field/pose ngày 01/11/2026](docs/PHASE2_2026-11-01.md) đã có trọng số và QC thực: AP50 cầu thủ 94,04%, bóng 13,19% trên 82 ảnh test nguồn; mốc sân đạt 0/92 điểm ở ngưỡng sai số 10 pixel trên validation. Các split chưa độc lập theo trận/video; bóng và mốc sân chưa đạt để mở trợ lý chiến thuật.
 
+[Chẩn đoán pose tiếp theo](docs/PHASE3_2026-11-01.md) xác nhận mạng học được tập nhỏ, bổ sung đếm optimizer update, học riêng head với đặc trưng lưu sẵn và kế hoạch chia nguồn. Sau lượt thử đủ 93 ảnh train, validation vẫn đạt 0/92 mốc ở sai số 5 pixel; trọng số thử nghiệm chưa thay baseline trong ứng dụng.
+
 ```bash
 python -m pip install -r tools/vision_qc/requirements-qc.txt
 python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v

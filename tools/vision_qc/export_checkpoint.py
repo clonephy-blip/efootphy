@@ -7,6 +7,13 @@ import shutil
 from pathlib import Path
 
 
+def exportable_epoch(checkpoint):
+    if checkpoint.get('debug_overfit_only'):
+        raise ValueError('Debug step-based weights require an explicit experiment manifest, not copied epoch metadata')
+    epoch=checkpoint.get('epoch')
+    return int(epoch)+1 if epoch is not None and epoch>=0 else None
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--checkpoint',required=True,type=Path)
@@ -27,7 +34,7 @@ def main():
     torch.set_num_threads(2);torch.backends.nnpack.enabled=False;torch.backends.mkldnn.enabled=True
     manifest=json.loads((a.reference_bundle/'manifest.json').read_text())
     checkpoint=torch.load(a.checkpoint,map_location='cpu',weights_only=False)
-    epoch=int(checkpoint['epoch'])+1
+    epoch=exportable_epoch(checkpoint)
     del checkpoint
     model=YOLO(a.checkpoint)
     spec=PROFILES[manifest['profile']]

@@ -63,6 +63,15 @@ weights and BN buffers must remain unchanged. This accelerates training; live
 inference still computes the backbone for every new image. Debug weights are
 tagged non-release and must not replace the research/application baseline.
 
+For a larger explicit source experiment, set `--max-samples 93 --probe-every 100`
+and pass a selection containing only the 93 audited training images. Validation
+images remain forbidden as training selections. The same strict source hashes,
+step/time budgets, frozen-weight checks and cache parity apply. This does not
+turn a training PCK score into validation accuracy. `evaluate_landmarks` accepts
+either an ONNX `--bundle` or an FP32 `--checkpoint` with identical pixel metrics.
+Step-based debug weights cannot use `export_checkpoint` to copy an unrelated
+epoch manifest; an experimental exporter must build accurate metadata explicitly.
+
 `python -m tools.vision_qc.split_candidates --audit SOURCE_QC.json --groups
 GROUP_CANDIDATES.json --forbid-checkpoints SEEN_WEIGHTS.json --out NEW_PLAN.json`
 plans groups without moving source files. It merges exact-pixel links, quarantines

@@ -32,6 +32,11 @@ class PoseSanityInputTest(unittest.TestCase):
     def test_validation_images_cannot_be_used_for_sanity_training(self):
         self.write_audit('valid')
         with self.assertRaises(ValueError):checked_samples(self.root,self.audit,[self.relative])
+        with self.assertRaises(ValueError):checked_samples(self.root,self.audit,[self.relative],93)
+
+    def test_invalid_explicit_sample_limit_is_rejected(self):
+        for limit in [0,257]:
+            with self.assertRaises(ValueError):checked_samples(self.root,self.audit,[self.relative],limit)
 
     def test_changed_label_is_not_silently_used(self):
         self.label.write_text('modified')

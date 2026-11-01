@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import time
+import os
 from pathlib import Path
 
 from .dataset_qc import EXTENSIONS, split_directory
@@ -44,7 +45,9 @@ def aggregate(records):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--bundle',required=True,type=Path)
+    source=parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--bundle',type=Path)
+    source.add_argument('--checkpoint',type=Path,help='FP32 pose checkpoint; same metrics as ONNX evaluation')
     parser.add_argument('--data',required=True,type=Path)
     parser.add_argument('--split',choices=['train','val','test'],default='val')
     parser.add_argument('--out',required=True,type=Path)
@@ -56,20 +59,34 @@ def main():
     from PIL import Image,ImageDraw
     cv2.setNumThreads(1)
     if args.out.exists():raise ValueError('Use a new output directory')
-    manifest=json.loads((args.bundle/'manifest.json').read_text())
-    model=args.bundle/'model.onnx'
-    digest=hashlib.sha256(model.read_bytes()).hexdigest()
-    if digest!=manifest['model_sha256'] or manifest['profile']!='landmarks' or manifest['kpt_shape']!=[32,3]:
-        raise ValueError('Model hash/profile/keypoint schema mismatch')
-    size=manifest['input_size']
+    if args.bundle:
+        manifest=json.loads((args.bundle/'manifest.json').read_text());model=args.bundle/'model.onnx'
+        digest=hashlib.sha256(model.read_bytes()).hexdigest()
+        if digest!=manifest['model_sha256'] or manifest['profile']!='landmarks' or manifest['kpt_shape']!=[32,3]:
+            raise ValueError('Model hash/profile/keypoint schema mismatch')
+        size=manifest['input_size'];backend='ONNX Runtime CPU 1 thread'
+        options=ort.SessionOptions();options.intra_op_num_threads=1;options.inter_op_num_threads=1
+        session=ort.InferenceSession(str(model),sess_options=options,providers=['CPUExecutionProvider'])
+        input_name=session.get_inputs()[0].name
+        def forward(tensor):return session.run(None,{input_name:tensor})[0]
+    else:
+        os.environ['ATEN_CPU_CAPABILITY']='default'
+        import torch
+        from ultralytics import YOLO
+        torch.set_num_threads(1);torch.backends.nnpack.enabled=False;torch.backends.mkldnn.enabled=True
+        loaded=YOLO(args.checkpoint);net=loaded.model.eval()
+        if loaded.task!='pose' or getattr(net.model[-1],'kpt_shape',None)!=[32,3] or list(loaded.names.values())!=['pitch']:
+            raise ValueError('Expected one-class 32-point pitch checkpoint')
+        digest=hashlib.sha256(args.checkpoint.read_bytes()).hexdigest();size=640;backend='PyTorch CPU 1 thread'
+        def forward(tensor):
+            with torch.inference_mode():raw=net(torch.from_numpy(tensor))
+            if isinstance(raw,(tuple,list)):raw=raw[0]
+            return raw.detach().cpu().numpy()
     config=yaml.safe_load(args.data.read_text())
     folder=split_directory(args.data.resolve().parent,config[args.split])
     files=sorted(p for p in folder.rglob('*') if p.suffix.lower() in EXTENSIONS)
     if not files:raise ValueError('No evaluation images')
-    options=ort.SessionOptions();options.intra_op_num_threads=1;options.inter_op_num_threads=1
-    session=ort.InferenceSession(str(model),sess_options=options,providers=['CPUExecutionProvider'])
-    input_name=session.get_inputs()[0].name
-    session.run(None,{input_name:np.zeros((1,3,size,size),np.float32)})
+    forward(np.zeros((1,3,size,size),np.float32))
     args.out.mkdir(parents=True)
     all_points=[];images=[];times=[]
     for path in files:
@@ -85,7 +102,7 @@ def main():
         cx,cy,bw,bh=np.asarray(row[1:5])*[width,height,width,height]
         target_box=[cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2]
         tensor,transform=letterbox(frame,size)
-        started=time.perf_counter();raw=session.run(None,{input_name:tensor})[0];times.append((time.perf_counter()-started)*1000)
+        started=time.perf_counter();raw=forward(tensor);times.append((time.perf_counter()-started)*1000)
         expected_anchors=sum((size//s)**2 for s in [8,16,32])
         if raw.shape!=(1,101,expected_anchors) or not np.isfinite(raw).all():
             raise ValueError('Unexpected/non-finite landmark output')
@@ -110,13 +127,13 @@ def main():
         images.append({'image':path.relative_to(args.data.resolve().parent).as_posix(),
             'image_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'object_score':score,
             'box_iou':overlap,'object_matched':detected,'points':points,'summary':aggregate(points),'preview':filename})
-    report={'schema_version':1,'model_sha256':digest,'split':args.split,'images':len(images),
+    report={'schema_version':1,'model_sha256':digest,'backend':backend,'split':args.split,'images':len(images),
         'scope':'source split only; not independent Mobile/match evaluation',
         'object_selection':'highest pitch-score anchor, score>=0.25 and GT bbox IoU>=0.5',
         'point_threshold':.5,'visibility_scored':2,'coordinate_space':'original source image pixels',
         'summary':aggregate(all_points),'per_keypoint':{str(i):aggregate([x for x in all_points if x['id']==i]) for i in range(32)},
         'cpu_forward_ms':{'median':float(np.median(times)),'p95':float(np.percentile(times,95)),
-                          'scope':'ORT CPU 1 thread, forward only; not Android latency'},
+                          'scope':backend+', forward only; not Android latency'},
         'records':images,'models_validated':False,'camera_calibration_enabled':False}
     (args.out/'report.json').write_text(json.dumps(report,indent=2))
     canvas=Image.new('RGB',(1280,665*math.ceil(len(images)/2)),(15,20,25));draw=ImageDraw.Draw(canvas)

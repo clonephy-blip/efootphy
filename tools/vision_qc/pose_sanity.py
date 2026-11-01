@@ -12,13 +12,13 @@ from .evaluate_landmarks import aggregate,score_points
 from .inspect_frames import iou,letterbox
 
 
-def checked_samples(root, audit_file, selection):
+def checked_samples(root, audit_file, selection, max_samples=8):
     root=Path(root).resolve();report=json.loads(Path(audit_file).read_text())
     if report['task']!='pose' or report['kpt_shape']!=[32,3] or not report['data_valid']:
         raise ValueError('A valid 32-point source audit is required')
     indexed={r['image']:r for r in report['images']};result=[]
-    if not selection or len(selection)>8 or len(set(selection))!=len(selection):
-        raise ValueError('Choose 1..8 unique training images')
+    if not 1<=max_samples<=256 or not selection or len(selection)>max_samples or len(set(selection))!=len(selection):
+        raise ValueError('Choose unique training images within the explicit sample limit')
     for relative in selection:
         path=(root/relative).resolve();record=indexed.get(relative)
         if not record or record['split']!='train' or not path.is_relative_to(root):
@@ -52,12 +52,14 @@ def main():
     p.add_argument('--refine-after',type=int,help='Training-only sigma/lr refinement after this many updates')
     p.add_argument('--freeze-bn-stats',action='store_true',help='Keep BatchNorm running moments fixed; affine parameters still learn')
     p.add_argument('--head-only-cache',action='store_true',help='Learn cv4 only; cache frozen FPN features, freeze all BN moments')
+    p.add_argument('--max-samples',type=int,default=8,help='Explicit training subset size limit; default 8')
+    p.add_argument('--probe-every',type=int,default=10,help='Evaluate the selected training images at this update interval')
     a=p.parse_args()
-    if a.steps<1 or a.threads<1 or not math.isfinite(a.max_minutes) or a.max_minutes<=0 or not 0<a.sigma<=.25 or not 0<a.lr<=.01:
+    if a.steps<1 or a.threads<1 or a.probe_every<1 or not math.isfinite(a.max_minutes) or a.max_minutes<=0 or not 0<a.sigma<=.25 or not 0<a.lr<=.01:
         p.error('Invalid step/time/thread/loss settings')
     if a.refine_after is not None and not 0<a.refine_after<a.steps:
         p.error('Refinement step must lie inside the optimization budget')
-    samples=checked_samples(a.root,a.audit,json.loads(a.selection.read_text()))
+    samples=checked_samples(a.root,a.audit,json.loads(a.selection.read_text()),a.max_samples)
     if a.out.exists():raise ValueError('Use a new output directory')
     a.out.mkdir(parents=True)
     os.environ['ATEN_CPU_CAPABILITY']='default';os.environ['POLARS_MAX_THREADS']=str(a.threads)
@@ -171,7 +173,7 @@ def main():
             if not torch.isfinite(gradient):raise RuntimeError('Non-finite gradient')
             if first_gradient_norm is None:first_gradient_norm=float(gradient)
             optimizer.step();steps=step
-            if step%10==0 or step==a.steps:
+            if step%a.probe_every==0 or step==a.steps:
                 summary,last_predictions=evaluate(step)
                 median=summary['coordinate_error_on_detected_objects']['median_px']
                 consecutive=consecutive+1 if summary['pck']['5']>=.95 and median is not None and median<=3 else 0
@@ -204,6 +206,7 @@ def main():
         'source_checkpoint_sha256':hashlib.sha256(a.weights.read_bytes()).hexdigest(),'source_checkpoint_optimizer_updates':original_updates,
         'source_checkpoint_debug_updates':prior_debug_updates,'debug_optimizer_updates_total':prior_debug_updates+steps,
         'optimizer_updates':steps,'elapsed_seconds':elapsed,'learning_rate':a.lr,'sigma':a.sigma,'threads':a.threads,
+        'probe_every':a.probe_every,'selected_training_images':len(samples),
         'batch':1,'gradient_accumulation':1,'augmentation':False,'ema_used':False,'seed':20261101,
         'batchnorm_running_statistics_frozen':a.freeze_bn_stats or a.head_only_cache,'batchnorm_buffer_max_change':bn_change,
         'head_only_cache':a.head_only_cache,'frozen_weights_unchanged':frozen_digest()==original_frozen_digest,
