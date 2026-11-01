@@ -135,6 +135,66 @@ The Android model importer currently accepts the minimap detector only. Field
 and landmark bundles are research exports; training or exporting them does not
 connect those branches to Android capture or enable tactical advice.
 
+## Dense heatmaps and reviewed geometry proposals
+
+`heatmap_pose` is a separate research architecture, not another YOLO cv4 run.
+It audits the reviewed 93/10 pose source, fixes the encoder in evaluation mode,
+and learns dense 32-channel heatmaps plus visibility using GroupNorm/LayerNorm.
+Training uses 320-square images, 80-square heatmaps, batch 8 and one optimizer
+update per batch. Coordinates and PCK remain in the original 640-square source
+pixels. It assumes pitch images; it has no independent pitch/menus detector gate.
+
+```bash
+python -m tools.vision_qc.heatmap_pose \
+  --root datasets/landmarks-reviewed --weights models/pose-encoder.pt \
+  --out runs/dense-control --steps 1000 --max-minutes 6 --batch 8 --views 1
+python -m tools.vision_qc.heatmap_pose \
+  --root datasets/landmarks-reviewed --weights models/pose-encoder.pt \
+  --out runs/dense-augmented --steps 1000 --max-minutes 6 --batch 8 --views 4
+```
+
+The extra views use small projective warps and brightness changes. Coordinates
+follow the exact image matrix; out-of-frame targets become missing. Generated
+PNGs, point labels and source matrices are saved privately. These are correlated
+views of the source photos, not additional independent photographs. There is no
+unverified horizontal flip or ID permutation. No validation image becomes a view.
+
+`transfer_landmarks --pose-root POSE --field-root FIELD --out NEW_DIR` scans
+only the original field training split. SIFT/FLANN shortlists train-source images;
+RANSAC must pass distributed-inlier, reprojection and white-line support gates.
+Pose holdout bytes and reliably matching holdout views are excluded. This does
+not certify independence by match/video. The output is a proposal queue, not
+ground truth. Review overlays and ID semantics, mask HUD/occluded points and
+deduplicate source frame variants before creating the separate reviewed JSON.
+
+For the reviewed JSON, each accepted item needs `review_status` equal to
+`approved_geometry_review`, `target_split` equal to `train`, image SHA-256,
+relative `image`, absolute recovery `path`, and 32 `points` in 640-square pixels.
+Preserve the proposal index, source image/hash, homography and review edits.
+Automatic proposals lacking that explicit review status cannot enter training.
+
+```bash
+python -m tools.vision_qc.heatmap_pose \
+  --root datasets/landmarks-reviewed --weights models/pose-encoder.pt \
+  --pseudo review/reviewed.json --pseudo-root datasets/field-pseudo \
+  --out runs/dense-cross --steps 1000 --max-minutes 6 --batch 8 --views 4
+python -m tools.vision_qc.infer_heatmap \
+  --encoder models/pose-encoder.pt --head runs/dense-augmented/heatmap-head.pt \
+  --image input.jpg --out predictions/example
+```
+
+Pseudo-label losses have weight 0.5. Untransferred pseudo-label points are
+unknown: they have neither coordinate nor negative-visibility supervision.
+Model-generated guesses never replace the held-out ground truth. Record actual
+exposures to original/pseudo views; equal optimizer updates do not imply equal
+original-data exposure after enlarging a dataset. Each run saves the final
+checkpoint, not a validation-picked intermediate checkpoint. Repeatedly comparing
+methods on the same 10 images is exploratory model selection, not a blind test.
+
+The dense checkpoint binds the head to the encoder SHA. It is not an Android
+minimap bundle. The single-image inference tool checks this binding; it is useful
+for inspecting research predictions, not evidence of sustained Android performance.
+
 Use `python -m tools.vision_qc.landmark_diagnostics --data DATA.yaml --out NEW_DIR`
 to inspect per-ID visible support and centre-label consistency. ID 15 in this
 source export is the centre spot. This must not be assumed from a generic

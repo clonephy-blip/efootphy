@@ -30,6 +30,8 @@ Xem [quy trình](docs/TRAINING.md), [kiến trúc và giới hạn](docs/ARCHITE
 
 [Chẩn đoán pose tiếp theo](docs/PHASE3_2026-11-01.md) xác nhận mạng học được tập nhỏ, bổ sung đếm optimizer update, học riêng head với đặc trưng lưu sẵn và kế hoạch chia nguồn. Sau lượt thử đủ 93 ảnh train, validation vẫn đạt 0/92 mốc ở sai số 5 pixel; trọng số thử nghiệm chưa thay baseline trong ứng dụng.
 
+[Thử nghiệm bản đồ nhiệt và chuyển nhãn](docs/PHASE4_2026-11-01.md) học lại trên toàn bộ 93 ảnh, tăng cường ảnh bằng biến đổi có nhãn đi kèm và rà đề xuất từ 2.319 ảnh field train. Đây là nhánh nghiên cứu riêng, dùng encoder cố định và head mới; chưa tích hợp vào Android. Báo cáo giữ cả đối chứng và kết quả train chéo kém hơn.
+
 ```bash
 python -m pip install -r tools/vision_qc/requirements-qc.txt
 python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
