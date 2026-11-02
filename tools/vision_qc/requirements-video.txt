@@ -1,0 +1,2 @@
+-r requirements-qc.txt
+onnxruntime==1.31.1
