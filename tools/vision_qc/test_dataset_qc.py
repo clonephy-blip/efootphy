@@ -128,6 +128,16 @@ class DatasetQcTest(unittest.TestCase):
         self.assertTrue(audit(data)['data_valid'])
         with self.assertRaises(ValueError):preflight(data,3,None,'landmarks',True)
 
+    def test_half_pitch_profile_preserves_18_point_schema(self):
+        data=self.fixture(pose=True)
+        config=yaml.safe_load(data.read_text());config.update(kpt_shape=[18,3],names=['half_pitch'])
+        data.write_text(yaml.safe_dump(config))
+        for label in self.root.glob('*/labels/*.txt'):
+            label.write_text(' '.join(label.read_text().split()[:59]))
+        result=preflight(data,3,None,'half-pitch',True)
+        self.assertEqual(result['kpt_shape'],[18,3])
+        with self.assertRaises(ValueError):preflight(data,3,None,'landmarks',True)
+
     def test_missing_test_and_video_groups_do_not_claim_independent_evaluation(self):
         result=audit(self.fixture(test=False))
         self.assertTrue(result['data_valid'])

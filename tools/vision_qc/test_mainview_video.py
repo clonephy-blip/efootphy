@@ -6,6 +6,16 @@ from .mainview_video import decode_field,prepare_frame
 
 
 class MainviewVideoTests(unittest.TestCase):
+    def test_explicit_stretch_source_adapter_restores_both_axes(self):
+        frame=np.zeros((360,780,3),np.uint8)
+        tensor,t=prepare_frame(frame,source_stretch=True)
+        self.assertEqual(tensor.shape,(1,3,640,640))
+        raw=np.zeros((1,11,8400),np.float32)
+        raw[0,:4,0]=[200*640/780,150*640/360,40*640/780,80*640/360];raw[0,10,0]=.9
+        result=decode_field(raw,t)
+        np.testing.assert_allclose(result[0]['box_xyxy_px'],[180,110,220,190],atol=1e-4)
+        self.assertEqual(result[0]['class_name'],'referee')
+
     def test_letterbox_restores_original_pixel_boxes(self):
         frame=np.full((360,780,3),(35,110,40),np.uint8)
         tensor,t=prepare_frame(frame);self.assertEqual(tensor.shape,(1,3,640,640))

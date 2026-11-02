@@ -20,6 +20,7 @@ PROFILES = {
     'field': {'task': 'detect', 'base': 'yolo11n.pt', 'imgsz': 640,
               'names': ['ball', 'cursor', 'cursor_secondary', 'goalkeeper', 'player', 'powerbar', 'referee']},
     'landmarks': {'task': 'pose', 'base': 'yolo11n-pose.pt', 'imgsz': 640, 'names': ['pitch']},
+    'half-pitch': {'task': 'pose', 'base': 'yolo11n-pose.pt', 'imgsz': 640, 'names': ['half_pitch']},
 }
 
 
@@ -60,6 +61,8 @@ def validate_report(report, profile, research_only):
         raise ValueError('Profile task/class order does not match data.yaml')
     if profile=='landmarks' and report['kpt_shape']!=[32,3]:
         raise ValueError('Landmark profile requires exactly 32 keypoints with visibility')
+    if profile=='half-pitch' and report['kpt_shape']!=[18,3]:
+        raise ValueError('Half-pitch profile requires exactly 18 keypoints with visibility')
     if not report['data_valid']:
         raise ValueError(f'Dataset QC failed: {len(report["data_errors"])} errors; normalize and audit the full export first')
     if not research_only and not report['eligible_for_independent_evaluation']:
@@ -99,8 +102,8 @@ def main():
         parser.error('Warm-start checkpoint does not exist')
     if args.max_minutes is not None and (not math.isfinite(args.max_minutes) or args.max_minutes <= 0):
         parser.error('Budget must be positive and finite')
-    if args.pose_train_sigma is not None and (args.profile != 'landmarks' or not 0 < args.pose_train_sigma <= .25):
-        parser.error('Training sigma requires landmarks and must be in (0,.25]')
+    if args.pose_train_sigma is not None and (PROFILES[args.profile]['task'] != 'pose' or not 0 < args.pose_train_sigma <= .25):
+        parser.error('Training sigma requires a pose profile and must be in (0,.25]')
     if args.out.exists() and any(args.out.iterdir()):
         parser.error('Output directory must be new or empty')
     args.out.mkdir(parents=True, exist_ok=True)
@@ -149,7 +152,7 @@ def main():
         control.start()
         if args.pose_train_sigma is not None:
             criterion = trainer.model.init_criterion()
-            criterion.keypoint_loss.sigmas = torch.full((32,), args.pose_train_sigma, device=trainer.device)
+            criterion.keypoint_loss.sigmas = torch.full((qc['kpt_shape'][0],), args.pose_train_sigma, device=trainer.device)
             trainer.model.criterion = criterion
     model.add_callback('on_pretrain_routine_start', configure_threads)
     model.add_callback('on_train_start', begin_training)

@@ -13,9 +13,14 @@ import numpy as np
 FIELD_CLASSES=['ball','cursor','cursor_secondary','goalkeeper','player','powerbar','referee']
 
 
-def prepare_frame(frame,size=640):
+def prepare_frame(frame,size=640,source_stretch=False):
     if frame.dtype!=np.uint8 or frame.ndim!=3 or frame.shape[2]!=3:raise ValueError('uint8 BGR frame required')
-    h,w=frame.shape[:2];r=min(size/w,size/h);rw,rh=round(w*r),round(h*r)
+    h,w=frame.shape[:2]
+    if source_stretch:
+        canvas=cv2.resize(frame,(size,size))
+        tensor=np.ascontiguousarray(canvas[:,:,::-1].transpose(2,0,1)[None],dtype=np.float32)/255.
+        return tensor,(0,0,size/w,size/h,w,h)
+    r=min(size/w,size/h);rw,rh=round(w*r),round(h*r)
     left,top=(size-rw)//2,(size-rh)//2
     canvas=np.full((size,size,3),114,np.uint8);canvas[top:top+rh,left:left+rw]=cv2.resize(frame,(rw,rh))
     tensor=np.ascontiguousarray(canvas[:,:,::-1].transpose(2,0,1)[None],dtype=np.float32)/255.
@@ -29,8 +34,12 @@ def decode_field(output,transform,threshold=.35,iou_threshold=.45):
     values=raw[0].T;labels=values[:,4:].argmax(1);scores=values[np.arange(len(values)),labels+4]
     keep=scores>=threshold;values,labels,scores=values[keep],labels[keep],scores[keep]
     boxes=np.c_[values[:,:2]-values[:,2:4]/2,values[:,:2]+values[:,2:4]/2]
-    left,top,r,width,height=transform
-    boxes=(boxes-np.array([left,top,left,top]))/r
+    if len(transform)==5:
+        left,top,r,width,height=transform;rx=ry=r
+    elif len(transform)==6:
+        left,top,rx,ry,width,height=transform
+    else:raise ValueError('Unexpected pixel transform')
+    boxes=(boxes-np.array([left,top,left,top]))/[rx,ry,rx,ry]
     boxes[:,[0,2]]=np.clip(boxes[:,[0,2]],0,width);boxes[:,[1,3]]=np.clip(boxes[:,[1,3]],0,height)
     detections=[]
     for label in range(7):
@@ -53,6 +62,7 @@ def main():
     p.add_argument('--video',type=Path,required=True);p.add_argument('--bundle',type=Path,required=True)
     p.add_argument('--times-ms',type=Path,required=True,help='JSON array of diagnostic sample PTS targets')
     p.add_argument('--out',type=Path,required=True);p.add_argument('--max-samples',type=int,default=48)
+    p.add_argument('--source-stretch',action='store_true',help='Explicit research adapter for a stretched source export')
     args=p.parse_args()
     if args.out.exists():raise ValueError('Use a new output directory')
     requested=json.loads(args.times_ms.read_text())
@@ -77,7 +87,7 @@ def main():
             if not ok:raise ValueError('Cannot decode requested frame')
             pts=float(capture.get(cv2.CAP_PROP_POS_MSEC))
             if not np.isfinite(pts) or pts<=previous:raise ValueError('Decoder did not provide increasing PTS')
-            previous=pts;started=time.perf_counter();tensor,transform=prepare_frame(frame)
+            previous=pts;started=time.perf_counter();tensor,transform=prepare_frame(frame,source_stretch=args.source_stretch)
             preprocess_ms=(time.perf_counter()-started)*1000;started=time.perf_counter()
             raw=session.run(None,{session.get_inputs()[0].name:tensor})[0]
             forward_ms=(time.perf_counter()-started)*1000;started=time.perf_counter();detections=decode_field(raw,transform)
@@ -103,6 +113,7 @@ def main():
     elapsed=[r['forward_ms'] for r in records[1:]]
     report={'source_video':args.video.name,'source_sha256':hashlib.sha256(args.video.read_bytes()).hexdigest(),
         'model_sha256':digest,'threshold':.35,'records':records,'samples':len(records),
+        'source_stretch_adapter':args.source_stretch,
         'forward_ms_median_excluding_first':float(np.median(elapsed)) if elapsed else None,
         'forward_ms_p95_excluding_first':float(np.percentile(elapsed,95)) if elapsed else None,
         'scope':'Offline sampled frames, no labelled accuracy, no scene/action/identity ground truth, not Android FPS',
