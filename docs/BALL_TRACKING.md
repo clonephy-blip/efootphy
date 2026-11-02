@@ -67,6 +67,31 @@ uses original frame intervals, including the final missed frame, and resets at
 unknown references or missing source intervals. Freeze thresholds and masks
 before comparing checkpoints.
 
+`video_ball_crops --base-crops PREVIOUS_CROPS` appends reviewed training frames
+while copying the existing validation payload byte for byte. It rejects any
+validation-source extension, duplicated source frame, changed payload count or
+crop identity collision. A fingerprint of every validation image and label is
+recorded before and after the operation. Keep the original dataset and the
+extension provenance available together.
+
+`--backend opencv` on `ball_video` and `score_ball_frames` selects local OpenCV
+DNN CPU inference. Where engine selection is available, it explicitly chooses
+the classic engine; this code path does not import ONNX Runtime. Validate raw
+output parity against PyTorch before changing runtime, and remeasure latency.
+The optional ONNX Runtime path explicitly disables its telemetry before
+creating a session. Training sets the upstream offline/autoinstall settings
+before importing Ultralytics and disables synchronization.
+
+`--refine-reacquire` is an experimental search-policy alternative. While lost,
+it can confirm up to two weak coarse candidates using native-resolution crops
+of the same current frame. A nearby native observation must meet the normal
+acquisition threshold; weak coarse scores alone cannot create a track. An
+active track still uses its ordinary single native crop. Compare both policies
+on the same model, and both model versions under the same policy. Additional
+forward passes cost time and may introduce false positives: keep the option
+explicit and score no-ball states as well as visible-ball recall. No future
+frames or ground-truth crop coordinates are used during inference.
+
 ## Consecutive video evaluation
 
 Use `python -m tools.vision_qc.ball_video --video VIDEO --model BALL_ONNX

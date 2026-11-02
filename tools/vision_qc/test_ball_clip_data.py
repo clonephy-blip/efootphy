@@ -10,7 +10,7 @@ import numpy as np
 
 from .ball_clip_data import frame_span, validate_ball_review, validate_clip_plan
 from .score_ball_frames import score_predictions, score_tracking_records
-from .video_ball_crops import build_video_crops
+from .video_ball_crops import build_video_crops,extend_train_crops,validation_fingerprint
 
 
 def example():
@@ -149,3 +149,27 @@ class CropExportTests(unittest.TestCase):
             duplicate=copy.deepcopy(rows[0]);duplicate['id']='different-id'
             review.write_text(json.dumps(rows+[duplicate]))
             with self.assertRaises(ValueError):build_video_crops(plan,review,root/'out')
+
+    def test_train_extension_preserves_every_validation_byte(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);plan,review,rows=self.inputs(root)
+            base=build_video_crops(plan,review,root/'base');before=validation_fingerprint(root/'base')
+            new=copy.deepcopy(rows[0]);new.update(id='a-3',source_frame_index=3,pts_ms=40.,causal_context_frame_indices=[1,2,3],causal_context_pts_ms=[20.,30.,40.])
+            review.write_text(json.dumps([new]));report=extend_train_crops(root/'base',plan,review,root/'next')
+            self.assertEqual(validation_fingerprint(root/'next'),before)
+            self.assertEqual(report['tile_counts']['valid'],base['tile_counts']['valid'])
+            self.assertGreater(report['tile_counts']['train'],base['tile_counts']['train'])
+
+    def test_validation_source_cannot_enter_train_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);plan,review,rows=self.inputs(root)
+            build_video_crops(plan,review,root/'base');review.write_text(json.dumps([rows[1]]))
+            with self.assertRaises(ValueError):extend_train_crops(root/'base',plan,review,root/'next')
+            self.assertFalse((root/'next').exists())
+
+    def test_source_frame_already_in_base_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);plan,review,rows=self.inputs(root)
+            build_video_crops(plan,review,root/'base');rows[0]['id']='renamed-old-frame'
+            review.write_text(json.dumps([rows[0]]))
+            with self.assertRaises(ValueError):extend_train_crops(root/'base',plan,review,root/'next')

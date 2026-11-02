@@ -28,6 +28,8 @@ def main():
     validate_report(qc,'field',research_only=True)
     os.environ['YOLO_CONFIG_DIR']=str(a.out/'settings')
     os.environ['POLARS_MAX_THREADS']='2'
+    os.environ['YOLO_OFFLINE']='true'
+    os.environ['YOLO_AUTOINSTALL']='false'
     import torch
     from ultralytics import YOLO, settings
     settings.update({'sync':False})

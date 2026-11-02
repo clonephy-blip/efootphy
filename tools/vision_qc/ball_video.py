@@ -40,14 +40,34 @@ def decode_ball(raw, transform, origin=(0,0), threshold=.15):
 
 
 class NativeBallDetector:
-    def __init__(self, model, source_stretch=False):
-        import onnxruntime as ort
-        options=ort.SessionOptions();options.intra_op_num_threads=1;options.inter_op_num_threads=1
-        self.session=ort.InferenceSession(str(model),sess_options=options,providers=['CPUExecutionProvider'])
-        if self.session.get_inputs()[0].shape!=[1,3,320,320] or self.session.get_outputs()[0].shape!=[1,11,2100]:
-            raise ValueError('Wrong ball model tensor contract')
-        self.input_name=self.session.get_inputs()[0].name
+    def __init__(self, model, source_stretch=False, backend='onnxruntime'):
+        self.backend=backend
+        if backend=='opencv':
+            # This path never imports ONNX Runtime. It reads a local graph and
+            # uses the CPU engine, with the same preprocessing/decoder contract.
+            if hasattr(cv2.dnn,'ENGINE_CLASSIC'):
+                self.net=cv2.dnn.readNetFromONNX(str(model),cv2.dnn.ENGINE_CLASSIC)
+            else:self.net=cv2.dnn.readNetFromONNX(str(model))
+            self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            if self.forward(np.zeros((1,3,320,320),np.float32)).shape!=(1,11,2100):raise ValueError('Wrong ball output contract')
+        elif backend=='onnxruntime':
+            import onnxruntime as ort
+            ort.disable_telemetry_events()
+            options=ort.SessionOptions();options.intra_op_num_threads=1;options.inter_op_num_threads=1
+            self.session=ort.InferenceSession(str(model),sess_options=options,providers=['CPUExecutionProvider'])
+            if self.session.get_inputs()[0].shape!=[1,3,320,320] or self.session.get_outputs()[0].shape!=[1,11,2100]:raise ValueError('Wrong ball model tensor contract')
+            self.input_name=self.session.get_inputs()[0].name
+        else:raise ValueError('Unknown inference backend')
         self.source_stretch=source_stretch
+
+    def forward(self,tensor):
+        if tensor.shape!=(1,3,320,320) or tensor.dtype!=np.float32 or not np.isfinite(tensor).all():raise ValueError('Finite RGB FP32 320px tensor required')
+        if self.backend=='opencv':
+            self.net.setInput(tensor);output=self.net.forward()
+        else:output=self.session.run(None,{self.input_name:tensor})[0]
+        if output.shape!=(1,11,2100) or not np.isfinite(output).all():raise ValueError('Wrong ball output contract')
+        return output
 
     def detect_crop(self, frame, rect, threshold=.15):
         x0,y0,x1,y1=rect;h,w=frame.shape[:2]
@@ -58,7 +78,7 @@ class NativeBallDetector:
             tr=(0,0,320/(x1-x0),320/(y1-y0),x1-x0,y1-y0)
         else:
             tensor,tr=prepare_frame(crop,320)
-        return decode_ball(self.session.run(None,{self.input_name:tensor})[0],tr,(x0,y0),threshold)
+        return decode_ball(self.forward(tensor),tr,(x0,y0),threshold)
 
     def scan(self, frame, predicted=None, excluded_rects=()):
         h,w=frame.shape[:2]
@@ -99,12 +119,19 @@ def main():
     p.add_argument('--flow',action='store_true',help='Current-image LK candidates between detector refreshes')
     p.add_argument('--detector-interval-ms',type=float,default=0.,help='Only ball flow still runs on each source frame')
     p.add_argument('--source-stretch',action='store_true',help='Experimental 16:9 crop-to-square source adapter')
+    p.add_argument('--backend',choices=['onnxruntime','opencv'],default='onnxruntime')
+    p.add_argument('--refine-reacquire',action='store_true',help='Experimental same-frame native confirmation of weak coarse candidates')
     a=p.parse_args()
     if a.out.exists() or not 0<=a.start_ms<a.end_ms or not 1<=a.max_frames<=2000 or not 0<=a.detector_interval_ms<=250:
         raise ValueError('New output and bounded replay required')
     rects=[] if a.excluded_rects is None else json.loads(a.excluded_rects.read_text())
     if a.detector_interval_ms and not a.flow:raise ValueError('Skipped neural updates require the per-frame flow branch')
-    detector=NativeBallDetector(a.model,a.source_stretch);track=CausalBallTrack(a.acquire,a.maintain)
+    if a.refine_reacquire:
+        if a.source_stretch:raise ValueError('Refinement requires the native geometry adapter')
+        from .reacquire_ball import CoarseToFineBallDetector
+        detector=CoarseToFineBallDetector(a.model,backend=a.backend,acquire=a.acquire)
+    else:detector=NativeBallDetector(a.model,a.source_stretch,a.backend)
+    track=CausalBallTrack(a.acquire,a.maintain)
     cv2.setNumThreads(1);capture=cv2.VideoCapture(str(a.video));a.out.mkdir(parents=True)
     records=[];previous=-1.;predicted=None;last_thumb=None;index=-1
     previous_gray=None;flow_xy=None;last_detector_pts=-float('inf')
@@ -170,6 +197,8 @@ def main():
             'source_frames_skipped_within_interval':0,'ground_truth_reviewed':False,
             'flow_enabled':a.flow,'detector_interval_ms':a.detector_interval_ms,
             'source_stretch_adapter':a.source_stretch,
+            'inference_backend':a.backend,
+            'refined_reacquisition_enabled':a.refine_reacquire,
             'android_real_time_verified':False,'model_is_temporal':False,'models_validated':False}
     (a.out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     # VFR replay preserves original source intervals instead of inventing a 2Hz rate.
