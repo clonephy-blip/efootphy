@@ -34,6 +34,39 @@ the rows into polygons or invent a mapping between the two landmark schemas.
 Supply separate split directories before training. Keep geometric pose
 augmentation disabled until landmark reflection semantics are verified.
 
+## Reviewed Mobile video crops
+
+`video_ball_crops --plan CLIPS_JSON --reviews REVIEWS_JSON --out NEW_CROPS
+--replay-data EXISTING_CROPS` builds an appearance dataset from source-bound
+reviews. Keep each original video in one split; adjacent parts of a match do
+not establish independent-match validation. Review the actual ball geometry,
+not only a model score. Image/video hashes, source frame index, original PTS,
+visibility and three distinct causal context references are required. Unknown
+or occluded positions are withheld rather than exported as background labels.
+Context references preserve provenance; this exporter does not train a temporal
+model. Any use of future frames to assist offline review must be declared and
+must never become runtime input.
+
+Train crops use jittered ball positions, uniform background crops and optional
+reviewed false-object candidates. Validation crops use the same fixed full-frame
+grids regardless of the reference ball position. Original split replay can be
+mixed in to measure forgetting. Keep the full-frame held-out benchmark as well:
+crop AP alone can hide reacquisition failures and HUD false positives.
+
+`train_native_ball` accepts `--learning-rate` and `--stop-after-epochs`. The
+latter stops after saving an epoch while retaining the requested LR schedule.
+Each completed epoch publishes fsynced best/last checkpoints and a `ready.json`
+with hashes and provenance. Copy completed snapshots to durable storage while
+long runs continue; a local snapshot alone does not survive workspace resets.
+
+`score_ball_frames` scans each reviewed held-out full frame without choosing
+crops from ground truth. Missing visible balls stay in the recall denominator;
+top-one results and any-candidate results are separate. Continuous scoring also
+separates genuine observations from short predictions. Missing-position duration
+uses original frame intervals, including the final missed frame, and resets at
+unknown references or missing source intervals. Freeze thresholds and masks
+before comparing checkpoints.
+
 ## Consecutive video evaluation
 
 Use `python -m tools.vision_qc.ball_video --video VIDEO --model BALL_ONNX
