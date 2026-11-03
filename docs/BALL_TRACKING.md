@@ -92,6 +92,33 @@ forward passes cost time and may introduce false positives: keep the option
 explicit and score no-ball states as well as visible-ball recall. No future
 frames or ground-truth crop coordinates are used during inference.
 
+For a strictly local continuation, `train_ball_local --data CROPS/data.yaml
+--weights CHECKPOINT --out NEW_RUN` uses PyTorch, the existing network and its
+detection loss directly. It does not construct an Ultralytics Trainer,
+Validator or Exporter, and has no integration callbacks. A Python audit hook
+refuses socket connect, DNS and send operations in that worker. The loop
+records finite losses/gradients, optimizer updates, complete-epoch snapshots,
+final EMA selection and frozen validation identity. It trains only channel
+zero; all other checkpoint channels remain unsuitable for actor inference.
+Its seed, augmentation and optimizer details differ from the upstream trainer
+and must be reported rather than treated as an identical training recipe.
+
+The selected model is the final EMA after a predefined epoch count, with no
+validation-based checkpoint selection. ONNX export uses the local PyTorch
+export API and ONNX graph checks. `evaluate_ball_crops_local` computes ball AP
+from local model inference, NMS and metric functions without dataset download
+or Validator callbacks. First reproduce a stored baseline on the same crop
+payload; differing metric implementations cannot be compared silently.
+
+Crop validation shape matters: an upstream rectangular validator can add a
+stride-dependent border even to square source crops. The local AP runner uses
+an exact 320px input by default, matching the deployed tensor contract.
+`--padding 16` reproduces a legacy 352px padded diagnostic when needed; it is
+not an alternative input for the fixed 320px ONNX model. Record the input side
+and compare both checkpoints under the same preprocessing. Keep training
+quality, full-frame reacquisition, false alarms and contiguous tracking as
+separate acceptance gates; improved crop AP alone cannot select a model.
+
 ## Consecutive video evaluation
 
 Use `python -m tools.vision_qc.ball_video --video VIDEO --model BALL_ONNX
