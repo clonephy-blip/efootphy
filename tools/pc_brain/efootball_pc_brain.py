@@ -19,6 +19,7 @@ import cv2
 import mss
 import numpy as np
 import onnxruntime as ort
+from PIL import ImageGrab
 from sklearn.cluster import KMeans
 
 # Class indices from YOLO11n field model
@@ -36,11 +37,33 @@ class WindowCapture:
 
     def __init__(self, window_title="eFootball-Screen"):
         self.window_title = window_title
-        self.sct = mss.mss()
         self.user32 = ctypes.windll.user32
+        self.last_warn_time = 0.0
+
+    def find_target_window(self):
+        hwnd = self.user32.FindWindowW(None, self.window_title)
+        if hwnd and self.user32.IsWindow(hwnd) and self.user32.IsWindowVisible(hwnd):
+            return hwnd
+
+        # Fallback: search all visible windows for eFootball or scrcpy
+        matches = []
+        def enum_cb(h, _):
+            if self.user32.IsWindowVisible(h):
+                length = self.user32.GetWindowTextLengthW(h)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    self.user32.GetWindowTextW(h, buff, length + 1)
+                    title = buff.value
+                    if "efootball" in title.lower() or "scrcpy" in title.lower():
+                        matches.append((h, title))
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        self.user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+        return matches[0][0] if matches else None
 
     def get_window_rect(self):
-        hwnd = self.user32.FindWindowW(None, self.window_title)
+        hwnd = self.find_target_window()
         if not hwnd:
             return None
 
@@ -57,26 +80,48 @@ class WindowCapture:
         return {
             "left": int(pt.x),
             "top": int(pt.y),
+            "right": int(pt.x + width),
+            "bottom": int(pt.y + height),
             "width": int(width),
             "height": int(height)
         }
 
     def grab(self):
-        try:
-            bbox = self.get_window_rect()
-            if bbox is not None:
-                sct_img = self.sct.grab(bbox)
-                bgra = np.array(sct_img)
-                return cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR), True
+        bbox = self.get_window_rect()
+        frame = None
+        is_window = False
 
-            # Fallback: grab primary monitor
-            monitor = self.sct.monitors[1] if len(self.sct.monitors) > 1 else self.sct.monitors[0]
-            sct_img = self.sct.grab(monitor)
-            bgra = np.array(sct_img)
-            return cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR), False
-        except Exception:
-            time.sleep(0.05)
-            return np.zeros((360, 640, 3), dtype=np.uint8), False
+        if bbox is not None:
+            # Try Pillow ImageGrab (handles DPI scaling and multi-monitors cleanly)
+            try:
+                img = ImageGrab.grab(bbox=(bbox["left"], bbox["top"], bbox["right"], bbox["bottom"]))
+                frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                is_window = True
+            except Exception:
+                frame = None
+
+        if frame is None:
+            # Fallback: grab entire primary desktop
+            try:
+                img = ImageGrab.grab()
+                frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            except Exception:
+                try:
+                    with mss.mss() as sct:
+                        mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                        sct_img = sct.grab(mon)
+                        frame = cv2.cvtColor(np.array(sct_img), cv2.COLOR_BGRA2BGR)
+                except Exception:
+                    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+
+        # Check for black screen
+        if frame.mean() < 5.0:
+            now = time.time()
+            if now - self.last_warn_time >= 3.0:
+                self.last_warn_time = now
+                print("[Capture WARNING] Captured frame is pitch black! Check that scrcpy window is visible on screen.")
+
+        return frame, is_window
 
 
 class TeamKitClassifier:
@@ -467,6 +512,25 @@ class EFootballPcBrain:
             }
 
             self.send_packet(packet)
+
+            # Save debug frame periodically so user can inspect what AI sees
+            if fps_counter % 20 == 0:
+                try:
+                    dbg_img = frame_bgr.copy()
+                    dh, dw = dbg_img.shape[:2]
+                    for p in players:
+                        fx = int(p["feet_x"] * dw)
+                        fy = int(p["feet_y"] * dh)
+                        color = (255, 220, 0) if p["team"] == 0 else (0, 60, 255) if p["team"] == 1 else (0, 255, 255)
+                        cv2.circle(dbg_img, (fx, fy), max(int(dw * 0.02), 8), color, 2)
+                    if ball_data:
+                        bx = int(ball_data["x"] * dw)
+                        by = int(ball_data["y"] * dh)
+                        cv2.circle(dbg_img, (bx, by), 6, (0, 215, 255), -1)
+                    dbg_path = Path(__file__).resolve().parent.parent.parent / "debug_pc_brain.jpg"
+                    cv2.imwrite(str(dbg_path), dbg_img)
+                except Exception:
+                    pass
 
             # Cap loop at ~40 FPS to keep CPU cool
             elapsed = time.time() - loop_t0

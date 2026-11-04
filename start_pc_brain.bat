@@ -22,6 +22,7 @@ tasklist /fi "imagename eq scrcpy.exe" | findstr /i "scrcpy.exe" >nul
 if errorlevel 1 (
     start "" "C:\scrcpy-win64-v4.1\scrcpy.exe" --window-title "eFootball-Screen" --always-on-top -m 1280 --max-fps 60 --no-audio
     echo [OK] Cua so game scrcpy da bat!
+    timeout /t 3 /nobreak >nul
 ) else (
     echo [OK] scrcpy da mo san tren man hinh!
 )

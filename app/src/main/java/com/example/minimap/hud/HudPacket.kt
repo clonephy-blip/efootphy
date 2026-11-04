@@ -36,6 +36,7 @@ data class PassLine(
 
 data class HudPacket(
     val timestamp: Long = System.currentTimeMillis(),
+    val receivedAtMs: Long = android.os.SystemClock.elapsedRealtime(),
     val fps: Float = 60f,
     val latencyMs: Float = 0f,
     val status: String = "PC Brain Active",
@@ -47,6 +48,8 @@ data class HudPacket(
         fun fromJson(jsonStr: String): HudPacket? {
             return try {
                 val obj = JSONObject(jsonStr)
+                val timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                val receivedAt = android.os.SystemClock.elapsedRealtime()
                 val fps = obj.optDouble("fps", 60.0).toFloat()
                 val lat = obj.optDouble("latency", 0.0).toFloat()
                 val status = obj.optString("status", "PC Brain Active")
@@ -96,6 +99,8 @@ data class HudPacket(
                 }
 
                 HudPacket(
+                    timestamp = timestamp,
+                    receivedAtMs = receivedAt,
                     fps = fps,
                     latencyMs = lat,
                     status = status,

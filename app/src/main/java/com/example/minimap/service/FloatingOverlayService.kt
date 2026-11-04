@@ -98,16 +98,20 @@ class FloatingOverlayService : Service() {
             port = 8888,
             onPacketReceived = { packet ->
                 latestHudPacket.set(packet)
-                drawingLayer?.postInvalidateOnAnimation()
                 if (!isPcConnected) {
                     isPcConnected = true
-                    mainHandler.post { updatePodLabels() }
+                    mainHandler.post {
+                        drawingLayer?.visibility = View.VISIBLE
+                        updatePodLabels()
+                    }
                 }
+                drawingLayer?.postInvalidateOnAnimation()
             },
             onConnectionChanged = { connected ->
                 isPcConnected = connected
                 if (!connected) latestHudPacket.set(null)
                 mainHandler.post {
+                    if (connected) drawingLayer?.visibility = View.VISIBLE
                     updatePodLabels()
                     drawingLayer?.postInvalidateOnAnimation()
                 }
@@ -166,7 +170,7 @@ class FloatingOverlayService : Service() {
                         latestFrameResult.set(null)
                     }
                     updatePodLabels()
-                    drawingLayer?.visibility = if (running) View.VISIBLE else View.GONE
+                    drawingLayer?.visibility = if (running || isPcConnected) View.VISIBLE else View.GONE
                     updateForeground(running)
                 }
             },
@@ -474,9 +478,9 @@ class FloatingOverlayService : Service() {
             val packet = latestHudPacket.get()
 
             if (packet != null) {
-                val now = System.currentTimeMillis()
-                val lifetime = 800L
-                if (now - packet.timestamp < lifetime) {
+                val now = SystemClock.elapsedRealtime()
+                val lifetime = 2500L
+                if (now - packet.receivedAtMs < lifetime) {
                     postDelayed(expire, 60L)
 
                     // 1. Draw Tactical Pass Lines (Behind players)
