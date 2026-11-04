@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <!-- Keeps a user-started bubble alive before projection consent. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- No public runtime permission named MEDIA_PROJECTION: use the consent UI. -->
     <application
         android:allowBackup="false"
-        android:label="eFootball Minimap Assistant"
+        android:label="eFootball AI Assistant"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".ui.MainActivity" android:exported="true">
@@ -32,7 +32,7 @@
             android:foregroundServiceType="specialUse|mediaProjection">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-started draggable minimap assistant bubble, available while capture is off; removable from its ongoing notification." />
+                android:value="User-started draggable assistant bubble for real-time game overlay; removable from ongoing notification." />
         </service>
     </application>
 </manifest>

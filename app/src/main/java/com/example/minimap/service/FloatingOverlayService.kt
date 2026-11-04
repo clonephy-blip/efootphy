@@ -42,6 +42,8 @@ import com.example.minimap.processor.TacticalAnalyzer
 import com.example.minimap.processor.TacticalResult
 import com.example.minimap.ui.CaptureConsentActivity
 import com.example.minimap.BuildConfig
+import com.example.minimap.hud.HudPacket
+import com.example.minimap.hud.HudServer
 import com.example.minimap.ui.MainActivity
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
@@ -72,6 +74,9 @@ class FloatingOverlayService : Service() {
     private lateinit var analyzer: TacticalAnalyzer
 
     private val latestFrameResult = AtomicReference<TacticalResult?>(null)
+    private var hudServer: HudServer? = null
+    private val latestHudPacket = AtomicReference<HudPacket?>(null)
+    @Volatile private var isPcConnected = false
 
     private var controlPod: LinearLayout? = null
     private var mainToggleBtn: TextView? = null
@@ -89,6 +94,25 @@ class FloatingOverlayService : Service() {
         analyzer = TacticalAnalyzer(this)
         loadRoi(this)
         windows = requireNotNull(getSystemService(WindowManager::class.java))
+        hudServer = HudServer(
+            port = 8888,
+            onPacketReceived = { packet ->
+                latestHudPacket.set(packet)
+                drawingLayer?.postInvalidateOnAnimation()
+                if (!isPcConnected) {
+                    isPcConnected = true
+                    mainHandler.post { updatePodLabels() }
+                }
+            },
+            onConnectionChanged = { connected ->
+                isPcConnected = connected
+                if (!connected) latestHudPacket.set(null)
+                mainHandler.post {
+                    updatePodLabels()
+                    drawingLayer?.postInvalidateOnAnimation()
+                }
+            }
+        ).apply { start() }
         requireNotNull(getSystemService(NotificationManager::class.java)).createNotificationChannel(
             NotificationChannel(CHANNEL, "eFootball Assistant", NotificationManager.IMPORTANCE_LOW)
         )
@@ -156,14 +180,31 @@ class FloatingOverlayService : Service() {
     }
 
     private fun updatePodLabels() {
+        if (isPcConnected) {
+            val pkt = latestHudPacket.get()
+            val fpsStr = pkt?.let { " ${it.fps.roundToInt()}F" } ?: ""
+            mainToggleBtn?.text = "⚡ PC$fpsStr"
+            mainToggleBtn?.background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(Color.rgb(16, 185, 129))
+            }
+            return
+        }
         if (!captureActive) {
-            mainToggleBtn?.text = "BẬT QUÉT"
+            mainToggleBtn?.text = "CHỜ PC (8888)"
+            mainToggleBtn?.background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(Color.rgb(71, 85, 105))
+            }
             return
         }
         val arrow = if (analyzer.attackLeftToRight) "→" else "←"
         val modePrefix = if (analyzer.manualDirectionLock) "HƯỚNG" else "QUÉT"
         mainToggleBtn?.text = "$modePrefix $arrow"
-
+        mainToggleBtn?.background = GradientDrawable().apply {
+            cornerRadius = dp(8).toFloat()
+            setColor(Color.rgb(16, 185, 129))
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -199,7 +240,7 @@ class FloatingOverlayService : Service() {
     private fun showWindows() {
         val hud = RealTimeArHudView(this).apply {
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
-            visibility = View.GONE
+            visibility = View.VISIBLE
         }
         drawingLayer = hud
         windows.addView(
@@ -210,7 +251,7 @@ class FloatingOverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             ).apply {
-                alpha = 0.78f
+                alpha = 1.0f
             }
         )
 
@@ -225,7 +266,7 @@ class FloatingOverlayService : Service() {
         }
 
         val btnMain = TextView(this).apply {
-            text = "BẬT QUÉT"
+            text = "CHỜ PC (8888)"
             gravity = Gravity.CENTER
             textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
@@ -233,10 +274,14 @@ class FloatingOverlayService : Service() {
             setPadding(dp(8), dp(6), dp(8), dp(6))
             background = GradientDrawable().apply {
                 cornerRadius = dp(8).toFloat()
-                setColor(Color.rgb(16, 185, 129))
+                setColor(Color.rgb(71, 85, 105))
             }
             setOnClickListener {
-                if (captureActive) {
+                if (isPcConnected) {
+                    val currentVis = drawingLayer?.visibility == View.VISIBLE
+                    drawingLayer?.visibility = if (currentVis) View.GONE else View.VISIBLE
+                    Toast.makeText(this@FloatingOverlayService, if (currentVis) "Đã ẩn HUD" else "Đã hiện HUD", Toast.LENGTH_SHORT).show()
+                } else if (captureActive) {
                     capture.stop()
                 } else {
                     startActivity(
@@ -397,6 +442,8 @@ class FloatingOverlayService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        hudServer?.stop()
+        hudServer = null
         mainHandler.removeCallbacksAndMessages(null)
         capture.close { analyzer.close() }
         listOfNotNull(controlPod, drawingLayer).forEach {
@@ -421,12 +468,134 @@ class FloatingOverlayService : Service() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             removeCallbacks(expire)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val packet = latestHudPacket.get()
+
+            if (packet != null) {
+                val now = System.currentTimeMillis()
+                val lifetime = 800L
+                if (now - packet.timestamp < lifetime) {
+                    postDelayed(expire, 60L)
+
+                    // 1. Draw Tactical Pass Lines (Behind players)
+                    for (pass in packet.passLines) {
+                        paint.style = Paint.Style.STROKE
+                        paint.strokeWidth = dp(2).toFloat()
+                        if (pass.safe) {
+                            paint.color = Color.argb(200, 16, 185, 129) // Emerald safe pass
+                        } else {
+                            paint.color = Color.argb(160, 239, 68, 68) // Red contested pass
+                        }
+                        canvas.drawLine(pass.fromX, pass.fromY, pass.toX, pass.toY, paint)
+                        // Target indicator
+                        paint.style = Paint.Style.STROKE
+                        paint.strokeWidth = dp(1.5f).toFloat()
+                        canvas.drawCircle(pass.toX, pass.toY, dp(5).toFloat(), paint)
+                    }
+
+                    // 2. Draw Player Ground Rings with Distinct Team Colors
+                    for (player in packet.players) {
+                        val fx = player.feetX
+                        val fy = player.feetY
+                        val rx = player.radiusX.coerceIn(dp(12).toFloat(), dp(45).toFloat())
+                        val ry = player.radiusY.coerceIn(dp(5).toFloat(), dp(18).toFloat())
+                        val footOval = RectF(fx - rx, fy - ry, fx + rx, fy + ry)
+
+                        // 0: Team A (Cyan), 1: Team B (Orange/Red), 2: Goalkeeper (Yellow), 3: Referee
+                        val baseColor = when (player.team) {
+                            0 -> Color.rgb(0, 229, 255)   // Cyan (Team A)
+                            1 -> Color.rgb(255, 61, 0)    // Neon Orange/Red (Team B)
+                            2 -> Color.rgb(255, 234, 0)   // Bright Yellow (GK)
+                            else -> Color.rgb(241, 245, 249) // White (Referee)
+                        }
+
+                        // Ground ring fill
+                        paint.style = Paint.Style.FILL
+                        paint.color = Color.argb(40, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
+                        canvas.drawOval(footOval, paint)
+
+                        // Ground ring stroke
+                        paint.style = Paint.Style.STROKE
+                        paint.strokeWidth = dp(2).toFloat()
+                        paint.color = baseColor
+                        canvas.drawOval(footOval, paint)
+
+                        // Highlight if player possesses the ball
+                        if (player.hasBall) {
+                            paint.style = Paint.Style.STROKE
+                            paint.strokeWidth = dp(3).toFloat()
+                            paint.color = Color.rgb(255, 215, 0) // Gold halo
+                            val halo = RectF(fx - rx * 1.3f, fy - ry * 1.3f, fx + rx * 1.3f, fy + ry * 1.3f)
+                            canvas.drawOval(halo, paint)
+                        }
+
+                        // Indicator if player is actively user-controlled
+                        if (player.isControlled) {
+                            paint.style = Paint.Style.FILL
+                            paint.color = Color.rgb(0, 229, 255)
+                            val headY = player.y1
+                            val arrowPath = android.graphics.Path().apply {
+                                moveTo(fx, headY - dp(6))
+                                lineTo(fx - dp(6), headY - dp(16))
+                                lineTo(fx + dp(6), headY - dp(16))
+                                close()
+                            }
+                            canvas.drawPath(arrowPath, paint)
+                        }
+                    }
+
+                    // 3. Draw Ball Tracking Marker & Trajectory
+                    packet.ball?.let { b ->
+                        paint.style = Paint.Style.FILL
+                        paint.color = Color.argb(90, 255, 215, 0)
+                        canvas.drawCircle(b.x, b.y, dp(8).toFloat(), paint)
+
+                        paint.style = Paint.Style.FILL
+                        paint.color = Color.WHITE
+                        canvas.drawCircle(b.x, b.y, dp(4).toFloat(), paint)
+
+                        paint.style = Paint.Style.STROKE
+                        paint.strokeWidth = dp(1.5f).toFloat()
+                        paint.color = Color.rgb(255, 215, 0)
+                        canvas.drawCircle(b.x, b.y, dp(4).toFloat(), paint)
+
+                        if (abs(b.vx) > 0.5f || abs(b.vy) > 0.5f) {
+                            paint.style = Paint.Style.STROKE
+                            paint.strokeWidth = dp(2).toFloat()
+                            paint.color = Color.rgb(255, 215, 0)
+                            canvas.drawLine(b.x, b.y, b.x + b.vx * 3f, b.y + b.vy * 3f, paint)
+                        }
+                    }
+
+                    // 4. Draw Top Status Pill
+                    val teamACount = packet.players.count { it.team == 0 }
+                    val teamBCount = packet.players.count { it.team == 1 }
+                    val badgeText = "⚡ PC Brain: ${packet.fps.roundToInt()} FPS | ${packet.latencyMs.roundToInt()}ms | Đội A: $teamACount | Đội B: $teamBCount"
+                    textPaint.textSize = dp(11).toFloat()
+                    textPaint.color = Color.WHITE
+                    val tw = textPaint.measureText(badgeText)
+                    val bx = (w - tw) / 2f
+                    val bRect = RectF(bx - dp(12), dp(10).toFloat(), bx + tw + dp(12), dp(32).toFloat())
+
+                    paint.style = Paint.Style.FILL
+                    paint.color = Color.argb(200, 15, 23, 42)
+                    canvas.drawRoundRect(bRect, dp(10).toFloat(), dp(10).toFloat(), paint)
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = dp(1).toFloat()
+                    paint.color = Color.rgb(56, 189, 248)
+                    canvas.drawRoundRect(bRect, dp(10).toFloat(), dp(10).toFloat(), paint)
+                    canvas.drawText(badgeText, bx, dp(25).toFloat(), textPaint)
+
+                    return
+                }
+            }
+
             val result=latestFrameResult.get() ?: return
             val now=SystemClock.elapsedRealtimeNanos()
             val lifetime=250_000_000L
             if(!Timing.fresh(now,result.timestampNs,lifetime)) return
             postDelayed(expire,((result.timestampNs+lifetime-now)/1_000_000L).coerceAtLeast(1L))
-            val w=width.toFloat();val h=height.toFloat()
             // Draw the calibration outline outside the source crop to avoid capture feedback.
             val region=roi
             source.set(w*region.left,h*region.top,w*region.right,h*region.bottom)
