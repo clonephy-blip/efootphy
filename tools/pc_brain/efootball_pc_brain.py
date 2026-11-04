@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """
 efootball_pc_brain.py
-PC Co-Processor for eFootball Mobile (Method B).
-Runs AI detection (YOLO11n), team jersey K-Means clustering, ball tracking, and tactical pass suggestions.
-Streams lightweight normalized JSON HUD packets over USB ADB socket to the phone overlay at 60/120 FPS.
+Native Windows PC Co-Processor for eFootball Mobile (Method B).
+Ultra-low latency real-time screen analysis, YOLO11n AI detection, team color K-Means clustering,
+tactical pass suggestions, and normalized coordinate streaming to the Android AR HUD.
 """
 
+import ctypes
+import ctypes.wintypes
 import json
 import os
 import socket
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 import cv2
+import mss
 import numpy as np
 import onnxruntime as ort
 from sklearn.cluster import KMeans
@@ -27,6 +29,54 @@ CLASS_GOALKEEPER = 3
 CLASS_PLAYER = 4
 CLASS_POWERBAR = 5
 CLASS_REFEREE = 6
+
+
+class WindowCapture:
+    """High-speed screen grabber targeting the scrcpy game window or primary monitor."""
+
+    def __init__(self, window_title="eFootball-Screen"):
+        self.window_title = window_title
+        self.sct = mss.mss()
+        self.user32 = ctypes.windll.user32
+
+    def get_window_rect(self):
+        hwnd = self.user32.FindWindowW(None, self.window_title)
+        if not hwnd:
+            return None
+
+        rect = ctypes.wintypes.RECT()
+        self.user32.GetClientRect(hwnd, ctypes.byref(rect))
+        pt = ctypes.wintypes.POINT(0, 0)
+        self.user32.ClientToScreen(hwnd, ctypes.byref(pt))
+
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width <= 100 or height <= 100:
+            return None
+
+        return {
+            "left": int(pt.x),
+            "top": int(pt.y),
+            "width": int(width),
+            "height": int(height)
+        }
+
+    def grab(self):
+        try:
+            bbox = self.get_window_rect()
+            if bbox is not None:
+                sct_img = self.sct.grab(bbox)
+                bgra = np.array(sct_img)
+                return cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR), True
+
+            # Fallback: grab primary monitor
+            monitor = self.sct.monitors[1] if len(self.sct.monitors) > 1 else self.sct.monitors[0]
+            sct_img = self.sct.grab(monitor)
+            bgra = np.array(sct_img)
+            return cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR), False
+        except Exception:
+            time.sleep(0.05)
+            return np.zeros((360, 640, 3), dtype=np.uint8), False
 
 
 class TeamKitClassifier:
@@ -61,8 +111,7 @@ class TeamKitClassifier:
         if len(jersey_pixels) < 10:
             jersey_pixels = crop.reshape(-1, 3)
 
-        mean_bgr = np.mean(jersey_pixels, axis=0)
-        return mean_bgr
+        return np.mean(jersey_pixels, axis=0)
 
     def classify_players(self, img_bgr, player_boxes):
         if not player_boxes:
@@ -83,7 +132,6 @@ class TeamKitClassifier:
             labels = kmeans.fit_predict(colors_arr)
             centers = kmeans.cluster_centers_
 
-            # Track cluster center identity across frames for color stability
             if self.team0_center is None:
                 self.team0_center = centers[0]
                 self.team1_center = centers[1]
@@ -113,8 +161,7 @@ class TacticalPassAnalyzer:
 
         ball_possessor = None
         min_dist = float("inf")
-        # Proximity threshold in pixels
-        thresh_px = 0.08 * frame_w
+        thresh_px = 0.09 * frame_w
 
         if ball_pos:
             bx, by = ball_pos
@@ -173,16 +220,14 @@ class TacticalPassAnalyzer:
 
 
 class EFootballPcBrain:
-    def __init__(self, model_path, target_w=640, target_h=360, port=8888):
+    def __init__(self, model_path, port=8888):
         self.model_path = model_path
-        self.target_w = target_w
-        self.target_h = target_h
-        self.frame_len = target_w * target_h * 3
         self.port = port
         self.sess = None
         self.input_name = None
         self.input_size = 320
         self.kit_classifier = TeamKitClassifier()
+        self.cap = WindowCapture(window_title="eFootball-Screen")
         self.sock = None
         self.prev_ball = None
         self.prev_ball_time = time.time()
@@ -202,38 +247,19 @@ class EFootballPcBrain:
         if self.sock is not None:
             return True
 
-        targets = []
-        # If in WSL, resolve host Windows IP
-        if Path("/etc/resolv.conf").exists():
-            try:
-                with open("/etc/resolv.conf") as f:
-                    for line in f:
-                        if line.strip().startswith("nameserver"):
-                            host_ip = line.strip().split()[1]
-                            targets.append((host_ip, 8889))
-                            targets.append((host_ip, 8888))
-                            break
-            except Exception:
-                pass
-
-        targets.append(("127.0.0.1", 8889))
-        targets.append(("127.0.0.1", 8888))
-
-        for host, port in targets:
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                s.settimeout(0.4)
-                s.connect((host, port))
-                self.sock = s
-                print(f"[PC Brain] >>> CONNECTED TO PHONE HUD via {host}:{port} <<<")
-                return True
-            except Exception:
-                try: s.close()
-                except Exception: pass
-
-        self.sock = None
-        return False
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            s.settimeout(0.3)
+            s.connect(("127.0.0.1", self.port))
+            self.sock = s
+            print(f"[PC Brain] >>> CONNECTED TO PHONE HUD (Port {self.port}) <<<")
+            return True
+        except Exception:
+            try: s.close()
+            except Exception: pass
+            self.sock = None
+            return False
 
     def send_packet(self, packet_dict):
         if not self.connect_socket():
@@ -312,7 +338,6 @@ class EFootballPcBrain:
         # Team clustering for regular field players
         team_labels = self.kit_classifier.classify_players(frame_bgr, player_boxes)
 
-        # Construct raw pixel players for pass analysis
         raw_players = []
         for box, team in zip(player_boxes, team_labels):
             raw_players.append({
@@ -338,7 +363,6 @@ class EFootballPcBrain:
                 "controlled": False
             })
 
-        # Mark controlled player based on cursor position
         for cbox in cursor_boxes:
             ccx = (cbox[0] + cbox[2]) / 2.0
             ccy = cbox[3]
@@ -394,121 +418,68 @@ class EFootballPcBrain:
 
     def start_loop(self):
         print("\n" + "=" * 65)
-        print("   eFootball PC Brain Active (Method B - Zero Lag Mobile Client)")
+        print("   eFootball PC Brain Active (Method B - Native Windows)")
         print("=" * 65)
-
-        # Check if stdin is piped (e.g. from scrcpy)
-        is_piped = not sys.stdin.isatty()
-        scrcpy_proc = None
-
-        if is_piped:
-            print("[Video Source] Receiving direct video stream from scrcpy pipe.")
-            video_input = sys.stdin.buffer
-        else:
-            print("[Video Source] Spawning scrcpy.exe background capture...")
-            scrcpy_cmd = [
-                "/mnt/c/scrcpy-win64-v4.1/scrcpy.exe",
-                "--window-title=eFootball-Screen",
-                "--always-on-top",
-                "-m", "640",
-                "--max-fps", "30",
-                "--no-audio",
-                "--record=-",
-                "--record-format=mkv"
-            ]
-            scrcpy_proc = subprocess.Popen(scrcpy_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            video_input = scrcpy_proc.stdout
-
-        # Start ffmpeg decoder to produce raw BGR frames
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-loglevel", "quiet",
-            "-f", "matroska",
-            "-i", "pipe:0",
-            "-vf", f"scale={self.target_w}:{self.target_h}",
-            "-f", "rawvideo",
-            "-pix_fmt", "bgr24",
-            "pipe:1"
-        ]
-        ffmpeg_proc = subprocess.Popen(
-            ffmpeg_cmd,
-            stdin=video_input,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=self.frame_len * 2
-        )
-
-        print("[Decoder] Real-time hardware video stream ready!")
+        print("[Status] Searching for 'eFootball-Screen' window...")
         print("[Status] Monitoring gameplay and sending HUD packets to phone...\n")
 
         fps_counter = 0
         fps_start = time.time()
         current_fps = 30.0
 
-        try:
-            while True:
-                loop_t0 = time.time()
+        while True:
+            loop_t0 = time.time()
 
-                # Read 1 raw BGR frame from ffmpeg
-                raw_bytes = ffmpeg_proc.stdout.read(self.frame_len)
-                if not raw_bytes or len(raw_bytes) < self.frame_len:
-                    print("[Stream] Video stream ended or paused.")
-                    time.sleep(0.1)
-                    continue
+            # Grab screen frame
+            frame_bgr, is_window = self.cap.grab()
 
-                frame_bgr = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((self.target_h, self.target_w, 3))
+            # AI Inference & Tactical Analysis
+            ball_data, players, pass_lines, infer_ms = self.run_detection(frame_bgr)
 
-                # AI Inference & Tactical Analysis
-                ball_data, players, pass_lines, infer_ms = self.run_detection(frame_bgr)
+            fps_counter += 1
+            now = time.time()
+            if now - fps_start >= 1.0:
+                current_fps = fps_counter / (now - fps_start)
+                fps_counter = 0
+                fps_start = now
 
-                fps_counter += 1
-                now = time.time()
-                if now - fps_start >= 1.0:
-                    current_fps = fps_counter / (now - fps_start)
-                    fps_counter = 0
-                    fps_start = now
+            total_lat = (time.time() - loop_t0) * 1000.0
 
-                total_lat = (time.time() - loop_t0) * 1000.0
+            # Periodic Terminal Diagnostics (every 1 second)
+            if now - self.last_log_time >= 1.0:
+                self.last_log_time = now
+                team_a = sum(1 for p in players if p["team"] == 0)
+                team_b = sum(1 for p in players if p["team"] == 1)
+                ball_txt = f"({ball_data['x']:.2f}, {ball_data['y']:.2f})" if ball_data else "searching"
+                target_txt = "eFootball-Screen" if is_window else "Desktop (fallback)"
+                conn_txt = "CONNECTED" if self.sock else "waiting phone..."
+                print(f"[{conn_txt}] Src: {target_txt} | FPS: {current_fps:4.1f} | Infer: {infer_ms:4.1f}ms | Players: {len(players):2d} (A:{team_a:2d}, B:{team_b:2d}) | Ball: {ball_txt} | Passes: {len(pass_lines):2d}")
 
-                # Periodic Terminal Diagnostics (every 1 second)
-                if now - self.last_log_time >= 1.0:
-                    self.last_log_time = now
-                    team_a = sum(1 for p in players if p["team"] == 0)
-                    team_b = sum(1 for p in players if p["team"] == 1)
-                    ball_txt = f"({ball_data['x']:.2f}, {ball_data['y']:.2f})" if ball_data else "searching"
-                    conn_txt = "CONNECTED" if self.sock else "waiting phone..."
-                    print(f"[{conn_txt}] FPS: {current_fps:4.1f} | Infer: {infer_ms:4.1f}ms | Players: {len(players):2d} (A:{team_a:2d}, B:{team_b:2d}) | Ball: {ball_txt} | Passes: {len(pass_lines):2d}")
+            # Build Packet for Phone
+            packet = {
+                "timestamp": int(time.time() * 1000),
+                "fps": float(current_fps),
+                "latency": float(total_lat),
+                "status": f"AI Active ({infer_ms:.1f}ms)",
+                "ball": ball_data,
+                "players": players,
+                "pass_lines": pass_lines
+            }
 
-                # Build Packet for Phone
-                packet = {
-                    "timestamp": int(time.time() * 1000),
-                    "fps": float(current_fps),
-                    "latency": float(total_lat),
-                    "status": f"AI Active ({infer_ms:.1f}ms)",
-                    "ball": ball_data,
-                    "players": players,
-                    "pass_lines": pass_lines
-                }
+            self.send_packet(packet)
 
-                self.send_packet(packet)
-
-        finally:
-            try: ffmpeg_proc.terminate()
-            except Exception: pass
-            if scrcpy_proc:
-                try: scrcpy_proc.terminate()
-                except Exception: pass
-            if self.sock:
-                try: self.sock.close()
-                except Exception: pass
+            # Cap loop at ~40 FPS to keep CPU cool
+            elapsed = time.time() - loop_t0
+            sleep_needed = max(0.020 - elapsed, 0.001)
+            time.sleep(sleep_needed)
 
 
 def main():
-    model_path = Path("/mnt/c/Users/PC/.gemini/antigravity/scratch/efootphy/tools/models/field_yolo11n_320.onnx")
+    model_path = Path("C:/Users/PC/.gemini/antigravity/scratch/efootphy/tools/models/field_yolo11n_320.onnx")
     if not model_path.exists():
-        model_path = Path("C:/Users/PC/.gemini/antigravity/scratch/efootphy/tools/models/field_yolo11n_320.onnx")
+        model_path = Path("tools/models/field_yolo11n_320.onnx")
 
-    brain = EFootballPcBrain(model_path=model_path, target_w=640, target_h=360, port=8888)
+    brain = EFootballPcBrain(model_path=model_path, port=8888)
     try:
         brain.start_loop()
     except KeyboardInterrupt:
