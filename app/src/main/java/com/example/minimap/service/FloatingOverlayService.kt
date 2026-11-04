@@ -481,6 +481,11 @@ class FloatingOverlayService : Service() {
 
                     // 1. Draw Tactical Pass Lines (Behind players)
                     for (pass in packet.passLines) {
+                        val fromX = if (pass.fromX <= 1.0f) pass.fromX * w else pass.fromX
+                        val fromY = if (pass.fromY <= 1.0f) pass.fromY * h else pass.fromY
+                        val toX = if (pass.toX <= 1.0f) pass.toX * w else pass.toX
+                        val toY = if (pass.toY <= 1.0f) pass.toY * h else pass.toY
+
                         paint.style = Paint.Style.STROKE
                         paint.strokeWidth = dp(2).toFloat()
                         if (pass.safe) {
@@ -488,19 +493,19 @@ class FloatingOverlayService : Service() {
                         } else {
                             paint.color = Color.argb(160, 239, 68, 68) // Red contested pass
                         }
-                        canvas.drawLine(pass.fromX, pass.fromY, pass.toX, pass.toY, paint)
+                        canvas.drawLine(fromX, fromY, toX, toY, paint)
                         // Target indicator
                         paint.style = Paint.Style.STROKE
                         paint.strokeWidth = dp(2).toFloat()
-                        canvas.drawCircle(pass.toX, pass.toY, dp(5).toFloat(), paint)
+                        canvas.drawCircle(toX, toY, dp(5).toFloat(), paint)
                     }
 
                     // 2. Draw Player Ground Rings with Distinct Team Colors
                     for (player in packet.players) {
-                        val fx = player.feetX
-                        val fy = player.feetY
-                        val rx = player.radiusX.coerceIn(dp(12).toFloat(), dp(45).toFloat())
-                        val ry = player.radiusY.coerceIn(dp(5).toFloat(), dp(18).toFloat())
+                        val fx = if (player.feetX <= 1.0f) player.feetX * w else player.feetX
+                        val fy = if (player.feetY <= 1.0f) player.feetY * h else player.feetY
+                        val rx = if (player.radiusX <= 1.0f) (player.radiusX * w).coerceIn(dp(12).toFloat(), dp(45).toFloat()) else player.radiusX.coerceIn(dp(12).toFloat(), dp(45).toFloat())
+                        val ry = if (player.radiusY <= 1.0f) (player.radiusY * h).coerceIn(dp(5).toFloat(), dp(18).toFloat()) else player.radiusY.coerceIn(dp(5).toFloat(), dp(18).toFloat())
                         val footOval = RectF(fx - rx, fy - ry, fx + rx, fy + ry)
 
                         // 0: Team A (Cyan), 1: Team B (Orange/Red), 2: Goalkeeper (Yellow), 3: Referee
@@ -535,7 +540,7 @@ class FloatingOverlayService : Service() {
                         if (player.isControlled) {
                             paint.style = Paint.Style.FILL
                             paint.color = Color.rgb(0, 229, 255)
-                            val headY = player.y1
+                            val headY = if (player.y1 <= 1.0f) player.y1 * h else player.y1
                             val arrowPath = android.graphics.Path().apply {
                                 moveTo(fx, headY - dp(6))
                                 lineTo(fx - dp(6), headY - dp(16))
@@ -548,24 +553,27 @@ class FloatingOverlayService : Service() {
 
                     // 3. Draw Ball Tracking Marker & Trajectory
                     packet.ball?.let { b ->
+                        val bx = if (b.x <= 1.0f) b.x * w else b.x
+                        val by = if (b.y <= 1.0f) b.y * h else b.y
+
                         paint.style = Paint.Style.FILL
                         paint.color = Color.argb(90, 255, 215, 0)
-                        canvas.drawCircle(b.x, b.y, dp(8).toFloat(), paint)
+                        canvas.drawCircle(bx, by, dp(8).toFloat(), paint)
 
                         paint.style = Paint.Style.FILL
                         paint.color = Color.WHITE
-                        canvas.drawCircle(b.x, b.y, dp(4).toFloat(), paint)
+                        canvas.drawCircle(bx, by, dp(4).toFloat(), paint)
 
                         paint.style = Paint.Style.STROKE
                         paint.strokeWidth = dp(2).toFloat()
                         paint.color = Color.rgb(255, 215, 0)
-                        canvas.drawCircle(b.x, b.y, dp(4).toFloat(), paint)
+                        canvas.drawCircle(bx, by, dp(4).toFloat(), paint)
 
                         if (abs(b.vx) > 0.5f || abs(b.vy) > 0.5f) {
                             paint.style = Paint.Style.STROKE
                             paint.strokeWidth = dp(2).toFloat()
                             paint.color = Color.rgb(255, 215, 0)
-                            canvas.drawLine(b.x, b.y, b.x + b.vx * 3f, b.y + b.vy * 3f, paint)
+                            canvas.drawLine(bx, by, bx + b.vx * 3f, by + b.vy * 3f, paint)
                         }
                     }
 
