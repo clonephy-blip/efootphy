@@ -15,3 +15,8 @@ training-runs/
 tools/models/
 *.mp4
 *.keystore
+*.apk
+debug_*.jpg
+test_*.png
+test_*.mkv
+sample.*
