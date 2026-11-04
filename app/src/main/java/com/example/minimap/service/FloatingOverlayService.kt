@@ -438,6 +438,7 @@ class FloatingOverlayService : Service() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).roundToInt()
+    private fun dp(value: Float) = value * resources.displayMetrics.density
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
@@ -490,7 +491,7 @@ class FloatingOverlayService : Service() {
                         canvas.drawLine(pass.fromX, pass.fromY, pass.toX, pass.toY, paint)
                         // Target indicator
                         paint.style = Paint.Style.STROKE
-                        paint.strokeWidth = dp(1.5f).toFloat()
+                        paint.strokeWidth = dp(2).toFloat()
                         canvas.drawCircle(pass.toX, pass.toY, dp(5).toFloat(), paint)
                     }
 
@@ -556,7 +557,7 @@ class FloatingOverlayService : Service() {
                         canvas.drawCircle(b.x, b.y, dp(4).toFloat(), paint)
 
                         paint.style = Paint.Style.STROKE
-                        paint.strokeWidth = dp(1.5f).toFloat()
+                        paint.strokeWidth = dp(2).toFloat()
                         paint.color = Color.rgb(255, 215, 0)
                         canvas.drawCircle(b.x, b.y, dp(4).toFloat(), paint)
 
