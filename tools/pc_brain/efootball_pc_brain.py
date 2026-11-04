@@ -2,19 +2,19 @@
 """
 efootball_pc_brain.py
 PC Co-Processor for eFootball Mobile (Method B).
-Runs AI detection, team jersey K-Means clustering, ball tracking, and tactical pass suggestions.
-Streams lightweight JSON HUD packets over USB ADB socket to the phone overlay at high speed.
+Runs AI detection (YOLO11n), team jersey K-Means clustering, ball tracking, and tactical pass suggestions.
+Streams lightweight normalized JSON HUD packets over USB ADB socket to the phone overlay at 60/120 FPS.
 """
 
 import json
 import os
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 import cv2
-import mss
 import numpy as np
 import onnxruntime as ort
 from sklearn.cluster import KMeans
@@ -30,7 +30,7 @@ CLASS_REFEREE = 6
 
 
 class TeamKitClassifier:
-    """Dynamically clusters players into Team 0 vs Team 1 based on jersey color (HSV/RGB)."""
+    """Dynamically clusters players into Team 0 vs Team 1 based on jersey color."""
 
     def __init__(self):
         self.team0_center = None
@@ -40,7 +40,7 @@ class TeamKitClassifier:
         x1, y1, x2, y2 = bbox
         h = y2 - y1
         w = x2 - x1
-        if w < 10 or h < 15:
+        if w < 8 or h < 12:
             return None
 
         # Torso crop: top 25% to 58% of height, middle 60% of width
@@ -50,7 +50,7 @@ class TeamKitClassifier:
         tx2 = int(x2 - 0.20 * w)
 
         crop = img_bgr[max(0, ty1):min(img_bgr.shape[0], ty2), max(0, tx1):min(img_bgr.shape[1], tx2)]
-        if crop.size == 0 or crop.shape[0] < 4 or crop.shape[1] < 4:
+        if crop.size == 0 or crop.shape[0] < 3 or crop.shape[1] < 3:
             return None
 
         # Filter out green grass background
@@ -58,10 +58,9 @@ class TeamKitClassifier:
         grass_mask = (hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 85) & (hsv[:, :, 1] >= 40)
         jersey_pixels = crop[~grass_mask]
 
-        if len(jersey_pixels) < 15:
+        if len(jersey_pixels) < 10:
             jersey_pixels = crop.reshape(-1, 3)
 
-        # Average BGR of jersey
         mean_bgr = np.mean(jersey_pixels, axis=0)
         return mean_bgr
 
@@ -95,7 +94,6 @@ class TeamKitClassifier:
                     labels = 1 - labels
                     centers = centers[[1, 0]]
 
-                # Smooth update
                 self.team0_center = 0.85 * self.team0_center + 0.15 * centers[0]
                 self.team1_center = 0.85 * self.team1_center + 0.15 * centers[1]
 
@@ -109,21 +107,22 @@ class TacticalPassAnalyzer:
     """Calculates open passing lanes between teammates while avoiding opponents."""
 
     @staticmethod
-    def analyze(players, ball_pos):
+    def analyze(players, ball_pos, frame_w, frame_h):
         if not players:
             return None, []
 
         ball_possessor = None
         min_dist = float("inf")
+        # Proximity threshold in pixels
+        thresh_px = 0.08 * frame_w
 
-        # Find player closest to the ball
         if ball_pos:
             bx, by = ball_pos
             for p in players:
                 fx = (p["x1"] + p["x2"]) / 2.0
                 fy = p["y2"]
                 d = np.hypot(fx - bx, fy - by)
-                if d < min_dist and d < 80:  # within 80px
+                if d < min_dist and d < thresh_px:
                     min_dist = d
                     ball_possessor = p
 
@@ -141,15 +140,15 @@ class TacticalPassAnalyzer:
                 tx = (tm["x1"] + tm["x2"]) / 2.0
                 ty = tm["y2"]
                 pass_dist = np.hypot(tx - hx, ty - hy)
-                if pass_dist < 40:
-                    continue  # Too close
+                if pass_dist < 0.04 * frame_w:
+                    continue
 
-                # Check if any opponent is blocking this corridor
                 is_safe = True
                 line_vec = np.array([tx - hx, ty - hy])
                 line_len = pass_dist
                 line_unit = line_vec / (line_len + 1e-6)
 
+                corridor_px = 0.045 * frame_w
                 for opp in opponents:
                     ox = (opp["x1"] + opp["x2"]) / 2.0
                     oy = opp["y2"]
@@ -158,15 +157,15 @@ class TacticalPassAnalyzer:
 
                     if 20 < proj < line_len - 20:
                         perp_dist = np.linalg.norm(to_opp - proj * line_unit)
-                        if perp_dist < 45:  # Opponent in corridor
+                        if perp_dist < corridor_px:
                             is_safe = False
                             break
 
                 pass_lines.append({
-                    "from_x": float(hx),
-                    "from_y": float(hy),
-                    "to_x": float(tx),
-                    "to_y": float(ty),
+                    "from_x": float(hx / frame_w),
+                    "from_y": float(hy / frame_h),
+                    "to_x": float(tx / frame_w),
+                    "to_y": float(ty / frame_h),
                     "safe": bool(is_safe)
                 })
 
@@ -174,34 +173,36 @@ class TacticalPassAnalyzer:
 
 
 class EFootballPcBrain:
-    def __init__(self, model_path, port=8888):
+    def __init__(self, model_path, target_w=640, target_h=360, port=8888):
         self.model_path = model_path
+        self.target_w = target_w
+        self.target_h = target_h
+        self.frame_len = target_w * target_h * 3
         self.port = port
         self.sess = None
         self.input_name = None
         self.input_size = 320
         self.kit_classifier = TeamKitClassifier()
         self.sock = None
-        self.sct = mss.mss()
         self.prev_ball = None
         self.prev_ball_time = time.time()
+        self.last_log_time = 0.0
         self._init_model()
 
     def _init_model(self):
-        print(f"Loading YOLO11n ONNX model from: {self.model_path}")
+        print(f"[PC Brain] Loading YOLO11n ONNX model: {self.model_path}")
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = 4
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         self.sess = ort.InferenceSession(str(self.model_path), sess_options=opts)
         self.input_name = self.sess.get_inputs()[0].name
-        print(f"Model loaded successfully! Input: {self.input_name}")
+        print(f"[PC Brain] Model loaded successfully! Input: {self.input_name}")
 
     def connect_socket(self):
         if self.sock is not None:
             return True
 
-        # Candidate target endpoints
-        targets = [("127.0.0.1", 8888)]
+        targets = []
         # If in WSL, resolve host Windows IP
         if Path("/etc/resolv.conf").exists():
             try:
@@ -215,14 +216,17 @@ class EFootballPcBrain:
             except Exception:
                 pass
 
+        targets.append(("127.0.0.1", 8889))
+        targets.append(("127.0.0.1", 8888))
+
         for host, port in targets:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                s.settimeout(0.5)
+                s.settimeout(0.4)
                 s.connect((host, port))
                 self.sock = s
-                print(f"Connected to Phone HUD Server at {host}:{port} via USB ADB!")
+                print(f"[PC Brain] >>> CONNECTED TO PHONE HUD via {host}:{port} <<<")
                 return True
             except Exception:
                 try: s.close()
@@ -257,7 +261,6 @@ class EFootballPcBrain:
         infer_time_ms = (time.time() - t0) * 1000.0
 
         boxes_data = preds[0]  # shape: (11, 2100)
-        # Transpose to (2100, 11) -> 4 box coords + 7 class scores
         trans = boxes_data.T
         cx = trans[:, 0]
         cy = trans[:, 1]
@@ -268,7 +271,6 @@ class EFootballPcBrain:
         class_ids = np.argmax(scores, axis=1)
         confidences = np.max(scores, axis=1)
 
-        # Scale factors
         scale_x = orig_w / float(self.input_size)
         scale_y = orig_h / float(self.input_size)
 
@@ -283,7 +285,6 @@ class EFootballPcBrain:
             conf = confidences[i]
             cid = class_ids[i]
 
-            # Ball threshold is lower (0.08) because ball is tiny in full-field views
             if cid == CLASS_BALL and conf >= 0.08:
                 if conf > max_ball_conf:
                     max_ball_conf = conf
@@ -308,13 +309,13 @@ class EFootballPcBrain:
                 elif cid in (CLASS_CURSOR, CLASS_CURSOR_SEC):
                     cursor_boxes.append(box)
 
-        # Team clustering for players
+        # Team clustering for regular field players
         team_labels = self.kit_classifier.classify_players(frame_bgr, player_boxes)
 
-        # Construct final player list
-        final_players = []
+        # Construct raw pixel players for pass analysis
+        raw_players = []
         for box, team in zip(player_boxes, team_labels):
-            final_players.append({
+            raw_players.append({
                 "x1": box[0], "y1": box[1], "x2": box[2], "y2": box[3],
                 "team": int(team),
                 "has_ball": False,
@@ -322,7 +323,7 @@ class EFootballPcBrain:
             })
 
         for box in gk_boxes:
-            final_players.append({
+            raw_players.append({
                 "x1": box[0], "y1": box[1], "x2": box[2], "y2": box[3],
                 "team": 2,  # Goalkeeper
                 "has_ball": False,
@@ -330,7 +331,7 @@ class EFootballPcBrain:
             })
 
         for box in ref_boxes:
-            final_players.append({
+            raw_players.append({
                 "x1": box[0], "y1": box[1], "x2": box[2], "y2": box[3],
                 "team": 3,  # Referee
                 "has_ball": False,
@@ -340,8 +341,8 @@ class EFootballPcBrain:
         # Mark controlled player based on cursor position
         for cbox in cursor_boxes:
             ccx = (cbox[0] + cbox[2]) / 2.0
-            ccy = cbox[3]  # tip of cursor
-            for p in final_players:
+            ccy = cbox[3]
+            for p in raw_players:
                 if p["x1"] - 30 <= ccx <= p["x2"] + 30 and abs(p["y1"] - ccy) < 50:
                     p["controlled"] = True
                     break
@@ -361,59 +362,145 @@ class EFootballPcBrain:
                 vy = (by - self.prev_ball[1]) / dt
             self.prev_ball = (bx, by)
             self.prev_ball_time = now
-            ball_data = {"x": float(bx), "y": float(by), "vx": float(vx), "vy": float(vy)}
+            ball_data = {
+                "x": float(bx / orig_w),
+                "y": float(by / orig_h),
+                "vx": float(vx / orig_w),
+                "vy": float(vy / orig_h)
+            }
 
         # Tactical Pass Lines
-        _, pass_lines = TacticalPassAnalyzer.analyze(final_players, ball_pos)
+        _, pass_lines = TacticalPassAnalyzer.analyze(raw_players, ball_pos, orig_w, orig_h)
 
-        return ball_data, final_players, pass_lines, infer_time_ms
+        # Convert players to normalized coordinates [0.0, 1.0] for the phone HUD
+        norm_players = []
+        for p in raw_players:
+            fx = ((p["x1"] + p["x2"]) / 2.0) / orig_w
+            fy = p["y2"] / orig_h
+            rx = ((p["x2"] - p["x1"]) * 0.70) / orig_w
+            ry = ((p["y2"] - p["y1"]) * 0.25) / orig_h
+            norm_players.append({
+                "feet_x": float(fx),
+                "feet_y": float(fy),
+                "radius_x": float(rx),
+                "radius_y": float(ry),
+                "y1": float(p["y1"] / orig_h),
+                "team": int(p["team"]),
+                "has_ball": bool(p["has_ball"]),
+                "controlled": bool(p["controlled"])
+            })
+
+        return ball_data, norm_players, pass_lines, infer_time_ms
 
     def start_loop(self):
-        print("\n🚀 eFootball PC Brain is actively monitoring gameplay...")
-        print("💡 Make sure scrcpy is mirroring the game window on your screen.\n")
+        print("\n" + "=" * 65)
+        print("   eFootball PC Brain Active (Method B - Zero Lag Mobile Client)")
+        print("=" * 65)
+
+        # Check if stdin is piped (e.g. from scrcpy)
+        is_piped = not sys.stdin.isatty()
+        scrcpy_proc = None
+
+        if is_piped:
+            print("[Video Source] Receiving direct video stream from scrcpy pipe.")
+            video_input = sys.stdin.buffer
+        else:
+            print("[Video Source] Spawning scrcpy.exe background capture...")
+            scrcpy_cmd = [
+                "/mnt/c/scrcpy-win64-v4.1/scrcpy.exe",
+                "--window-title=eFootball-Screen",
+                "--always-on-top",
+                "-m", "640",
+                "--max-fps", "30",
+                "--no-audio",
+                "--record=-",
+                "--record-format=mkv"
+            ]
+            scrcpy_proc = subprocess.Popen(scrcpy_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            video_input = scrcpy_proc.stdout
+
+        # Start ffmpeg decoder to produce raw BGR frames
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-loglevel", "quiet",
+            "-f", "matroska",
+            "-i", "pipe:0",
+            "-vf", f"scale={self.target_w}:{self.target_h}",
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "pipe:1"
+        ]
+        ffmpeg_proc = subprocess.Popen(
+            ffmpeg_cmd,
+            stdin=video_input,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=self.frame_len * 2
+        )
+
+        print("[Decoder] Real-time hardware video stream ready!")
+        print("[Status] Monitoring gameplay and sending HUD packets to phone...\n")
 
         fps_counter = 0
         fps_start = time.time()
         current_fps = 30.0
 
-        monitor = self.sct.monitors[1] if len(self.sct.monitors) > 1 else self.sct.monitors[0]
+        try:
+            while True:
+                loop_t0 = time.time()
 
-        while True:
-            loop_t0 = time.time()
+                # Read 1 raw BGR frame from ffmpeg
+                raw_bytes = ffmpeg_proc.stdout.read(self.frame_len)
+                if not raw_bytes or len(raw_bytes) < self.frame_len:
+                    print("[Stream] Video stream ended or paused.")
+                    time.sleep(0.1)
+                    continue
 
-            # Grab screen frame
-            sct_img = self.sct.grab(monitor)
-            frame_bgra = np.array(sct_img)
-            frame_bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
+                frame_bgr = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((self.target_h, self.target_w, 3))
 
-            # AI Inference & Analysis
-            ball_data, players, pass_lines, infer_time_ms = self.run_detection(frame_bgr)
+                # AI Inference & Tactical Analysis
+                ball_data, players, pass_lines, infer_ms = self.run_detection(frame_bgr)
 
-            fps_counter += 1
-            if time.time() - fps_start >= 1.0:
-                current_fps = fps_counter / (time.time() - fps_start)
-                fps_counter = 0
-                fps_start = time.time()
+                fps_counter += 1
+                now = time.time()
+                if now - fps_start >= 1.0:
+                    current_fps = fps_counter / (now - fps_start)
+                    fps_counter = 0
+                    fps_start = now
 
-            total_lat = (time.time() - loop_t0) * 1000.0
+                total_lat = (time.time() - loop_t0) * 1000.0
 
-            # Build Packet
-            packet = {
-                "timestamp": int(time.time() * 1000),
-                "fps": float(current_fps),
-                "latency": float(total_lat),
-                "status": f"AI Active ({infer_time_ms:.1f}ms)",
-                "ball": ball_data,
-                "players": players,
-                "pass_lines": pass_lines
-            }
+                # Periodic Terminal Diagnostics (every 1 second)
+                if now - self.last_log_time >= 1.0:
+                    self.last_log_time = now
+                    team_a = sum(1 for p in players if p["team"] == 0)
+                    team_b = sum(1 for p in players if p["team"] == 1)
+                    ball_txt = f"({ball_data['x']:.2f}, {ball_data['y']:.2f})" if ball_data else "searching"
+                    conn_txt = "CONNECTED" if self.sock else "waiting phone..."
+                    print(f"[{conn_txt}] FPS: {current_fps:4.1f} | Infer: {infer_ms:4.1f}ms | Players: {len(players):2d} (A:{team_a:2d}, B:{team_b:2d}) | Ball: {ball_txt} | Passes: {len(pass_lines):2d}")
 
-            self.send_packet(packet)
+                # Build Packet for Phone
+                packet = {
+                    "timestamp": int(time.time() * 1000),
+                    "fps": float(current_fps),
+                    "latency": float(total_lat),
+                    "status": f"AI Active ({infer_ms:.1f}ms)",
+                    "ball": ball_data,
+                    "players": players,
+                    "pass_lines": pass_lines
+                }
 
-            # Target ~30-40 Hz update rate
-            elapsed = time.time() - loop_t0
-            sleep_needed = max(0.015 - elapsed, 0.001)
-            time.sleep(sleep_needed)
+                self.send_packet(packet)
+
+        finally:
+            try: ffmpeg_proc.terminate()
+            except Exception: pass
+            if scrcpy_proc:
+                try: scrcpy_proc.terminate()
+                except Exception: pass
+            if self.sock:
+                try: self.sock.close()
+                except Exception: pass
 
 
 def main():
@@ -421,11 +508,11 @@ def main():
     if not model_path.exists():
         model_path = Path("C:/Users/PC/.gemini/antigravity/scratch/efootphy/tools/models/field_yolo11n_320.onnx")
 
-    brain = EFootballPcBrain(model_path=model_path, port=8888)
+    brain = EFootballPcBrain(model_path=model_path, target_w=640, target_h=360, port=8888)
     try:
         brain.start_loop()
     except KeyboardInterrupt:
-        print("\nStopped PC Brain.")
+        print("\n[PC Brain] Stopped.")
 
 
 if __name__ == "__main__":

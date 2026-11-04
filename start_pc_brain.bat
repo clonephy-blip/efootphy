@@ -1,37 +1,28 @@
 @echo off
-chcp 65001 >nul
+chcp 437 >nul
 title eFootball AI Assistant - PC Brain (Method B)
 color 0b
 
 echo =====================================================================
-echo    ⚽ eFootball Pro AI Assistant - PC Co-Processor (Method B) ⚽
+echo    eFootball Pro AI Assistant - PC Co-Processor (Method B)
 echo =====================================================================
 echo.
-echo [1/3] Đang kiểm tra kết nối điện thoại qua USB...
-C:\adb\platform-tools\adb.exe devices
+
+echo [1/3] Kiem tra ket noi USB Android...
+"C:\scrcpy-win64-v4.1\adb.exe" devices
 echo.
 
-echo [2/3] Thiết lập kênh truyền dữ liệu USB (Port 8888)...
-C:\adb\platform-tools\adb.exe forward tcp:8888 tcp:8888
+echo [2/3] Thiet lap kenh truyen du lieu USB Port 8888...
+"C:\scrcpy-win64-v4.1\adb.exe" forward tcp:8888 tcp:8888
 start /b "" node "%~dp0tools\pc_brain\bridge.js"
-if %errorlevel% neq 0 (
-    echo [CANH BAO] Khong the thiet lap adb forward. Vui long kiem tra cap USB!
-) else (
-    echo [OK] Kênh kết nối USB Port 8888 đã sẵn sàng!
-)
+echo [OK] USB Port 8888 Bridge da khoi chay.
 echo.
 
-echo [3/3] Khởi động màn hình truyền hình ảnh scrcpy (60 FPS)...
-start "" "C:\scrcpy-win64-v4.1\scrcpy.exe" -m 1280 --max-fps 60 --always-on-top --window-title "eFootball-Screen" --no-audio
-echo [OK] scrcpy đã bật!
-echo.
-
-echo =====================================================================
-echo 🚀 Đang khởi chạy Trí tuệ nhân tạo (YOLO11n + Phân loại 2 đội + Chuyền)...
-echo 💡 Giữ cửa sổ này chạy khi chơi game. Nhấn Ctrl+C để dừng.
+echo [3/3] Khoi chay AI Vision + Scrcpy Game Stream...
+echo Ghi chu: Cua so game se hien thi. Du lieu HUD se ban vao dien thoai.
 echo =====================================================================
 echo.
 
-wsl python3 /mnt/c/Users/PC/.gemini/antigravity/scratch/efootphy/tools/pc_brain/efootball_pc_brain.py
+"C:\scrcpy-win64-v4.1\scrcpy.exe" --window-title "eFootball-Screen" --always-on-top -m 640 --max-fps 30 --no-audio --record=- --record-format=mkv | wsl python3 /mnt/c/Users/PC/.gemini/antigravity/scratch/efootphy/tools/pc_brain/efootball_pc_brain.py
 
 pause
