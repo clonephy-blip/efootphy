@@ -69,12 +69,17 @@ data class HudPacket(
                 val pArray = obj.optJSONArray("players") ?: JSONArray()
                 for (i in 0 until pArray.length()) {
                     val p = pArray.getJSONObject(i)
+                    val x1 = if (p.has("x1")) p.optDouble("x1", 0.0).toFloat() else (p.optDouble("feet_x", 0.5) - p.optDouble("radius_x", 0.04)).toFloat()
+                    val x2 = if (p.has("x2")) p.optDouble("x2", 0.0).toFloat() else (p.optDouble("feet_x", 0.5) + p.optDouble("radius_x", 0.04)).toFloat()
+                    val y2 = if (p.has("y2")) p.optDouble("y2", 0.0).toFloat() else p.optDouble("feet_y", 0.5).toFloat()
+                    val y1 = if (p.has("y1")) p.optDouble("y1", 0.0).toFloat() else (y2 - 0.08f)
+
                     players.add(
                         PlayerData(
-                            x1 = p.getDouble("x1").toFloat(),
-                            y1 = p.getDouble("y1").toFloat(),
-                            x2 = p.getDouble("x2").toFloat(),
-                            y2 = p.getDouble("y2").toFloat(),
+                            x1 = x1,
+                            y1 = y1,
+                            x2 = x2,
+                            y2 = y2,
                             team = p.optInt("team", 0),
                             label = p.optString("label", ""),
                             hasBall = p.optBoolean("has_ball", false),

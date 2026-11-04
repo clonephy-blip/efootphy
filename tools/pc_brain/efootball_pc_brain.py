@@ -352,9 +352,13 @@ class EFootballPcBrain:
         ref_boxes = []
         cursor_boxes = []
 
+        candidates = []
+        c_boxes = []
+        c_scores = []
+
         for i in range(len(confidences)):
-            conf = confidences[i]
-            cid = class_ids[i]
+            conf = float(confidences[i])
+            cid = int(class_ids[i])
 
             if cid == CLASS_BALL and conf >= 0.08:
                 if conf > max_ball_conf:
@@ -364,21 +368,29 @@ class EFootballPcBrain:
                     x2 = (cx[i] + w[i] / 2.0) * scale_x
                     y2 = (cy[i] + h[i] / 2.0) * scale_y
                     ball_box = (x1, y1, x2, y2)
-            elif conf >= 0.25:
+            elif conf >= 0.22:
                 x1 = (cx[i] - w[i] / 2.0) * scale_x
                 y1 = (cy[i] - h[i] / 2.0) * scale_y
-                x2 = (cx[i] + w[i] / 2.0) * scale_x
-                y2 = (cy[i] + h[i] / 2.0) * scale_y
-                box = [float(x1), float(y1), float(x2), float(y2)]
+                bw = w[i] * scale_x
+                bh = h[i] * scale_y
+                candidates.append((cid, conf, [float(x1), float(y1), float(x1 + bw), float(y1 + bh)]))
+                c_boxes.append([int(x1), int(y1), int(bw), int(bh)])
+                c_scores.append(conf)
 
-                if cid == CLASS_PLAYER:
-                    player_boxes.append(box)
-                elif cid == CLASS_GOALKEEPER:
-                    gk_boxes.append(box)
-                elif cid == CLASS_REFEREE:
-                    ref_boxes.append(box)
-                elif cid in (CLASS_CURSOR, CLASS_CURSOR_SEC):
-                    cursor_boxes.append(box)
+        if c_boxes:
+            indices = cv2.dnn.NMSBoxes(c_boxes, c_scores, score_threshold=0.22, nms_threshold=0.50)
+            if len(indices) > 0:
+                indices = indices.flatten() if hasattr(indices, 'flatten') else indices
+                for idx in indices:
+                    cid, conf, box = candidates[idx]
+                    if cid == CLASS_PLAYER:
+                        player_boxes.append(box)
+                    elif cid == CLASS_GOALKEEPER:
+                        gk_boxes.append(box)
+                    elif cid == CLASS_REFEREE:
+                        ref_boxes.append(box)
+                    elif cid in (CLASS_CURSOR, CLASS_CURSOR_SEC):
+                        cursor_boxes.append(box)
 
         # Team clustering for regular field players
         team_labels = self.kit_classifier.classify_players(frame_bgr, player_boxes)
@@ -449,11 +461,14 @@ class EFootballPcBrain:
             rx = ((p["x2"] - p["x1"]) * 0.70) / orig_w
             ry = ((p["y2"] - p["y1"]) * 0.25) / orig_h
             norm_players.append({
+                "x1": float(p["x1"] / orig_w),
+                "y1": float(p["y1"] / orig_h),
+                "x2": float(p["x2"] / orig_w),
+                "y2": float(p["y2"] / orig_h),
                 "feet_x": float(fx),
                 "feet_y": float(fy),
                 "radius_x": float(rx),
                 "radius_y": float(ry),
-                "y1": float(p["y1"] / orig_h),
                 "team": int(p["team"]),
                 "has_ball": bool(p["has_ball"]),
                 "controlled": bool(p["controlled"])
