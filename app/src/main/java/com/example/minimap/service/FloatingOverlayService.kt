@@ -560,24 +560,26 @@ class FloatingOverlayService : Service() {
                         val bx = if (b.x <= 1.0f) b.x * w else b.x
                         val by = if (b.y <= 1.0f) b.y * h else b.y
 
+                        // Outer pulsing halo
                         paint.style = Paint.Style.FILL
-                        paint.color = Color.argb(90, 255, 215, 0)
-                        canvas.drawCircle(bx, by, dp(8).toFloat(), paint)
+                        paint.color = Color.argb(100, 255, 215, 0)
+                        canvas.drawCircle(bx, by, dp(14).toFloat(), paint)
 
+                        // Inner ball marker
                         paint.style = Paint.Style.FILL
                         paint.color = Color.WHITE
-                        canvas.drawCircle(bx, by, dp(4).toFloat(), paint)
+                        canvas.drawCircle(bx, by, dp(6).toFloat(), paint)
 
                         paint.style = Paint.Style.STROKE
                         paint.strokeWidth = dp(2).toFloat()
                         paint.color = Color.rgb(255, 215, 0)
-                        canvas.drawCircle(bx, by, dp(4).toFloat(), paint)
+                        canvas.drawCircle(bx, by, dp(6).toFloat(), paint)
 
-                        if (abs(b.vx) > 0.5f || abs(b.vy) > 0.5f) {
+                        if (abs(b.vx) > 0.001f || abs(b.vy) > 0.001f) {
                             paint.style = Paint.Style.STROKE
-                            paint.strokeWidth = dp(2).toFloat()
+                            paint.strokeWidth = dp(2.5f).toFloat()
                             paint.color = Color.rgb(255, 215, 0)
-                            canvas.drawLine(bx, by, bx + b.vx * 3f, by + b.vy * 3f, paint)
+                            canvas.drawLine(bx, by, bx + b.vx * w * 0.4f, by + b.vy * h * 0.4f, paint)
                         }
                     }
 
