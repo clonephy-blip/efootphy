@@ -199,17 +199,37 @@ class EFootballPcBrain:
     def connect_socket(self):
         if self.sock is not None:
             return True
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            s.settimeout(1.0)
-            s.connect(("127.0.0.1", self.port))
-            self.sock = s
-            print(f"Connected to Phone HUD Server on port {self.port} via USB ADB!")
-            return True
-        except Exception:
-            self.sock = None
-            return False
+
+        # Candidate target endpoints
+        targets = [("127.0.0.1", 8888)]
+        # If in WSL, resolve host Windows IP
+        if Path("/etc/resolv.conf").exists():
+            try:
+                with open("/etc/resolv.conf") as f:
+                    for line in f:
+                        if line.strip().startswith("nameserver"):
+                            host_ip = line.strip().split()[1]
+                            targets.append((host_ip, 8889))
+                            targets.append((host_ip, 8888))
+                            break
+            except Exception:
+                pass
+
+        for host, port in targets:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                s.settimeout(0.5)
+                s.connect((host, port))
+                self.sock = s
+                print(f"Connected to Phone HUD Server at {host}:{port} via USB ADB!")
+                return True
+            except Exception:
+                try: s.close()
+                except Exception: pass
+
+        self.sock = None
+        return False
 
     def send_packet(self, packet_dict):
         if not self.connect_socket():

@@ -13,6 +13,7 @@ echo.
 
 echo [2/3] Thiết lập kênh truyền dữ liệu USB (Port 8888)...
 C:\adb\platform-tools\adb.exe forward tcp:8888 tcp:8888
+start /b "" node "%~dp0tools\pc_brain\bridge.js"
 if %errorlevel% neq 0 (
     echo [CANH BAO] Khong the thiet lap adb forward. Vui long kiem tra cap USB!
 ) else (
