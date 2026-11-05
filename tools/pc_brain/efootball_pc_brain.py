@@ -479,7 +479,8 @@ class EFootballPcBrain:
             }
 
         # Tactical Pass Lines
-        _, pass_lines = TacticalPassAnalyzer.analyze(raw_players, ball_pos, orig_w, orig_h)
+        # Hide pass hints if ball position is only an unconfirmed extrapolation.
+        _, pass_lines = TacticalPassAnalyzer.analyze(raw_players, ball_pos if ball_box is not None else None, orig_w, orig_h)
 
         # Convert players to normalized coordinates [0.0, 1.0] for the phone HUD
         norm_players = []
