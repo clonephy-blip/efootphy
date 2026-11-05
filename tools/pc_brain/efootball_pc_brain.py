@@ -10,6 +10,7 @@ import ctypes
 import ctypes.wintypes
 import json
 import os
+import select
 import socket
 import sys
 import time
@@ -22,10 +23,12 @@ import onnxruntime as ort
 from PIL import ImageGrab
 try:
     from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model
+    from tools.pc_brain.transport_rtt import AckRttMeter
 except ModuleNotFoundError as exc:
     if exc.name not in ("tools", "tools.pc_brain"):
         raise
     from runtime_safety import is_known_team, resolve_field_model
+    from transport_rtt import AckRttMeter
 
 # Class indices from YOLO11n field model
 CLASS_BALL = 0
@@ -319,6 +322,8 @@ class EFootballPcBrain:
         self.kit_classifier = TeamKitClassifier()
         self.cap = WindowCapture(window_title="eFootball-Screen")
         self.sock = None
+        self.packet_sequence = 0
+        self.transport_meter = AckRttMeter()
         self.prev_ball = None
         self.prev_ball_time = time.time()
         self.ball_persistence = 0
@@ -347,7 +352,9 @@ class EFootballPcBrain:
             s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             s.settimeout(0.3)
             s.connect(("127.0.0.1", self.port))
+            s.settimeout(0.05)  # Avoid blocking video capture on a stalled socket.
             self.sock = s
+            self.transport_meter.reset()
             print(f"[PC Brain] >>> CONNECTED TO PHONE HUD (Port {self.port}) <<<")
             return True
         except Exception:
@@ -356,18 +363,45 @@ class EFootballPcBrain:
             self.sock = None
             return False
 
+    def _disconnect_socket(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+        self.sock = None
+        self.transport_meter.reset()
+
+    def _receive_acks(self):
+        """Nonblocking PC→Android receive/parser→PC RTT, on the PC clock only."""
+        if self.sock is None:
+            return
+        try:
+            while select.select([self.sock], [], [], 0)[0]:
+                chunk = self.sock.recv(4096)
+                if not chunk:
+                    raise ConnectionError("HUD socket closed")
+                self.transport_meter.feed(chunk)
+        except (OSError, ConnectionError):
+            self._disconnect_socket()
+
     def send_packet(self, packet_dict):
         if not self.connect_socket():
             return False
         try:
-            line = json.dumps(packet_dict) + "\n"
+            seq = self.packet_sequence
+            self.packet_sequence += 1
+            payload = dict(packet_dict)
+            payload["seq"] = seq
+            last_rtt = self.transport_meter.last_rtt_ms
+            payload["transport_rtt_ms"] = round(last_rtt, 3) if last_rtt is not None else -1.0
+            line = json.dumps(payload, separators=(",", ":")) + "\n"
+            self.transport_meter.record_sent(seq)
             self.sock.sendall(line.encode("utf-8"))
-            return True
-        except Exception:
-            if self.sock:
-                try: self.sock.close()
-                except Exception: pass
-            self.sock = None
+            self._receive_acks()
+            return self.sock is not None
+        except (OSError, ConnectionError):
+            self._disconnect_socket()
             return False
 
     def run_detection(self, frame_bgr):
@@ -592,7 +626,8 @@ class EFootballPcBrain:
                 ball_txt = f"({ball_data['x']:.2f}, {ball_data['y']:.2f})" if ball_data else "searching"
                 target_txt = "eFootball-Screen" if is_window else "Desktop (fallback)"
                 conn_txt = "CONNECTED" if self.sock else "waiting phone..."
-                print(f"[{conn_txt}] Src: {target_txt} | FPS: {current_fps:4.1f} | Infer: {infer_ms:4.1f}ms | Players: {len(players):2d} (A:{team_a:2d}, B:{team_b:2d}) | Ball: {ball_txt} | Passes: {len(pass_lines):2d}")
+                transport_txt = f"{self.transport_meter.last_rtt_ms:.1f}ms" if self.transport_meter.last_rtt_ms is not None else "--"
+                print(f"[{conn_txt}] Src: {target_txt} | FPS: {current_fps:4.1f} | Infer: {infer_ms:4.1f}ms | USB RTT: {transport_txt} | Players: {len(players):2d} (A:{team_a:2d}, B:{team_b:2d}) | Ball: {ball_txt} | Passes: {len(pass_lines):2d}")
 
             # Build Packet for Phone
             packet = {

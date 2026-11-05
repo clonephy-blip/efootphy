@@ -28,7 +28,7 @@ jobs:
       - name: Dataset, normalization and release-gate regression tests
         run: python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
       - name: PC Brain dependency-free safety tests
-        run: python -m unittest tools.pc_brain.test_runtime_safety -v
+        run: python -m unittest tools.pc_brain.test_runtime_safety tools.pc_brain.test_transport_rtt -v
 
   android:
     runs-on: ubuntu-24.04
