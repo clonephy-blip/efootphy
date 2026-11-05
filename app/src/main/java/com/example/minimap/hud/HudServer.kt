@@ -22,7 +22,7 @@ class HudServer(
         serverThread = Thread({
             try {
                 // Local-only; ADB USB forwarding connects through device loopback.
-                serverSocket = ServerSocket(port, 1, InetAddress.getLoopbackAddress()).apply {
+                serverSocket = ServerSocket(port, 1, InetAddress.getByName("127.0.0.1")).apply {
                     reuseAddress = true
                 }
                 Log.d("HudServer", "HUD Server listening on port $port")
