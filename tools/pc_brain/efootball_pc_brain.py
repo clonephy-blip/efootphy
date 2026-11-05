@@ -24,11 +24,13 @@ from PIL import ImageGrab
 try:
     from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model
     from tools.pc_brain.transport_rtt import AckRttMeter
+    from tools.pc_brain.field_postprocess import decode_field_detections, cluster_kit_colors
 except ModuleNotFoundError as exc:
     if exc.name not in ("tools", "tools.pc_brain"):
         raise
     from runtime_safety import is_known_team, resolve_field_model
     from transport_rtt import AckRttMeter
+    from field_postprocess import decode_field_detections, cluster_kit_colors
 
 # Class indices from YOLO11n field model
 CLASS_BALL = 0
@@ -187,51 +189,21 @@ class TeamKitClassifier:
         jersey_pixels = crop[~grass_mask]
 
         if len(jersey_pixels) < 10:
-            jersey_pixels = crop.reshape(-1, 3)
+            return None
 
-        return np.mean(jersey_pixels, axis=0)
+        # Median reduces the influence of grass edges, numbers and HUD markers.
+        return np.median(jersey_pixels, axis=0)
 
     def classify_players(self, img_bgr, player_boxes):
         if not player_boxes:
             return []
-
-        colors = []
-        valid_indices = []
-        for i, box in enumerate(player_boxes):
-            c = self.extract_jersey_color(img_bgr, box)
-            if c is not None:
-                colors.append(c)
-                valid_indices.append(i)
-
-        teams = [-1] * len(player_boxes)
-        if len(colors) >= 2:
-            colors_arr = np.array(colors, dtype=np.float32)
-            # Ultra-fast pure NumPy 2-means (1.5ms vs 200ms)
-            if self.team0_center is not None and self.team1_center is not None:
-                c0 = self.team0_center.copy()
-                c1 = self.team1_center.copy()
-            else:
-                c0 = colors_arr[0].copy()
-                c1 = colors_arr[-1].copy()
-
-            for _ in range(5):
-                d0 = np.sum((colors_arr - c0) ** 2, axis=1)
-                d1 = np.sum((colors_arr - c1) ** 2, axis=1)
-                m0 = d0 <= d1
-                if np.any(m0):
-                    c0 = 0.8 * c0 + 0.2 * np.mean(colors_arr[m0], axis=0)
-                if np.any(~m0):
-                    c1 = 0.8 * c1 + 0.2 * np.mean(colors_arr[~m0], axis=0)
-
-            d0 = np.sum((colors_arr - c0) ** 2, axis=1)
-            d1 = np.sum((colors_arr - c1) ** 2, axis=1)
-            labels = (d0 > d1).astype(int)
-            self.team0_center = c0
-            self.team1_center = c1
-
-            for idx, label in zip(valid_indices, labels):
-                teams[idx] = int(label)
-
+        colors = [self.extract_jersey_color(img_bgr, box) for box in player_boxes]
+        prior = ((self.team0_center, self.team1_center)
+                 if self.team0_center is not None and self.team1_center is not None
+                 else None)
+        teams, centers = cluster_kit_colors(colors, prior=prior)
+        if centers is not None:
+            self.team0_center, self.team1_center = centers
         return teams
 
 
@@ -415,66 +387,20 @@ class EFootballPcBrain:
         preds = self.sess.run(None, {self.input_name: tensor})[0]  # shape: (1, 11, 2100)
         infer_time_ms = (time.time() - t0) * 1000.0
 
-        boxes_data = preds[0]  # shape: (11, 2100)
-        trans = boxes_data.T
-        cx = trans[:, 0]
-        cy = trans[:, 1]
-        w = trans[:, 2]
-        h = trans[:, 3]
-        scores = trans[:, 4:]  # 7 classes
-
-        class_ids = np.argmax(scores, axis=1)
-        confidences = np.max(scores, axis=1)
-
-        scale_x = orig_w / float(self.input_size)
-        scale_y = orig_h / float(self.input_size)
-
-        ball_box = None
-        max_ball_conf = 0.0
-        player_boxes = []
-        gk_boxes = []
-        ref_boxes = []
-        cursor_boxes = []
-
-        candidates = []
-        c_boxes = []
-        c_scores = []
-
-        for i in range(len(confidences)):
-            conf = float(confidences[i])
-            cid = int(class_ids[i])
-
-            if cid == CLASS_BALL and conf >= 0.08:
-                if conf > max_ball_conf:
-                    max_ball_conf = conf
-                    x1 = (cx[i] - w[i] / 2.0) * scale_x
-                    y1 = (cy[i] - h[i] / 2.0) * scale_y
-                    x2 = (cx[i] + w[i] / 2.0) * scale_x
-                    y2 = (cy[i] + h[i] / 2.0) * scale_y
-                    ball_box = (x1, y1, x2, y2)
-            elif conf >= 0.22:
-                x1 = (cx[i] - w[i] / 2.0) * scale_x
-                y1 = (cy[i] - h[i] / 2.0) * scale_y
-                bw = w[i] * scale_x
-                bh = h[i] * scale_y
-                candidates.append((cid, conf, [float(x1), float(y1), float(x1 + bw), float(y1 + bh)]))
-                c_boxes.append([int(x1), int(y1), int(bw), int(bh)])
-                c_scores.append(conf)
-
-        if c_boxes:
-            indices = cv2.dnn.NMSBoxes(c_boxes, c_scores, score_threshold=0.22, nms_threshold=0.50)
-            if len(indices) > 0:
-                indices = indices.flatten() if hasattr(indices, 'flatten') else indices
-                for idx in indices:
-                    cid, conf, box = candidates[idx]
-                    if cid == CLASS_PLAYER:
-                        player_boxes.append(box)
-                    elif cid == CLASS_GOALKEEPER:
-                        gk_boxes.append(box)
-                    elif cid == CLASS_REFEREE:
-                        ref_boxes.append(box)
-                    elif cid in (CLASS_CURSOR, CLASS_CURSOR_SEC):
-                        cursor_boxes.append(box)
+        # Decode all seven classes with *class-local* NMS. The ball channel is
+        # evaluated independently of non-ball argmax so a player/cursor proposal
+        # does not silently discard a small overlapping ball candidate.
+        # This improves proposal coverage, NOT yet verified ball precision.
+        detected = decode_field_detections(
+            preds, orig_w, orig_h, input_size=self.input_size,
+            object_threshold=0.22, ball_threshold=0.08, iou_threshold=0.50
+        )
+        ball_box = detected[CLASS_BALL][0][0] if detected[CLASS_BALL] else None
+        player_boxes = [box for box, _ in detected[CLASS_PLAYER]]
+        gk_boxes = [box for box, _ in detected[CLASS_GOALKEEPER]]
+        ref_boxes = [box for box, _ in detected[CLASS_REFEREE]]
+        cursor_boxes = ([box for box, _ in detected[CLASS_CURSOR]] +
+                        [box for box, _ in detected[CLASS_CURSOR_SEC]])
 
         # Team clustering for regular field players
         team_labels = self.kit_classifier.classify_players(frame_bgr, player_boxes)
