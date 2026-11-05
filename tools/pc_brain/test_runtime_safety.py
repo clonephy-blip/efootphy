@@ -61,5 +61,44 @@ class TeamHintTests(unittest.TestCase):
                 self.assertFalse(is_known_team(value))
 
 
+
+class FieldModelContractTests(unittest.TestCase):
+    def test_accepts_320_and_640_field_models(self):
+        from types import SimpleNamespace
+        from tools.pc_brain.runtime_safety import validate_field_onnx_io
+        def node(shape):
+            return SimpleNamespace(shape=shape)
+        self.assertEqual(
+            validate_field_onnx_io([node([1, 3, 320, 320])], [node([1, 11, 2100])]), 320
+        )
+        self.assertEqual(
+            validate_field_onnx_io([node([1, 3, 640, 640])], [node([1, 11, 8400])]), 640
+        )
+
+    def test_rejects_wrong_model_or_dynamic_shape(self):
+        from types import SimpleNamespace
+        from tools.pc_brain.runtime_safety import validate_field_onnx_io
+        def node(shape):
+            return SimpleNamespace(shape=shape)
+        for input_shape, output_shape in (
+            ([1, 3, 640, 640], [1, 7, 8400]),
+            ([1, 3, 640, 640], [1, 11, 2100]),
+            ([1, 3, "height", "width"], [1, 11, 8400]),
+            ([1, 3, 416, 416], [1, 11, 3549]),
+            ([1, 1, 640, 640], [1, 11, 8400]),
+        ):
+            with self.subTest(input_shape=input_shape, output_shape=output_shape):
+                with self.assertRaises(ValueError):
+                    validate_field_onnx_io([node(input_shape)], [node(output_shape)])
+
+    def test_rejects_multiple_outputs(self):
+        from types import SimpleNamespace
+        from tools.pc_brain.runtime_safety import validate_field_onnx_io
+        a = SimpleNamespace(shape=[1, 3, 320, 320])
+        b = SimpleNamespace(shape=[1, 11, 2100])
+        with self.assertRaises(ValueError):
+            validate_field_onnx_io([a], [b, b])
+
+
 if __name__ == "__main__":
     unittest.main()
