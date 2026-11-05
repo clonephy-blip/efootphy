@@ -22,13 +22,13 @@ import numpy as np
 import onnxruntime as ort
 from PIL import ImageGrab
 try:
-    from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model
+    from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model, validate_field_onnx_io
     from tools.pc_brain.transport_rtt import AckRttMeter
     from tools.pc_brain.field_postprocess import decode_field_detections, cluster_kit_colors
 except ModuleNotFoundError as exc:
     if exc.name not in ("tools", "tools.pc_brain"):
         raise
-    from runtime_safety import is_known_team, resolve_field_model
+    from runtime_safety import is_known_team, resolve_field_model, validate_field_onnx_io
     from transport_rtt import AckRttMeter
     from field_postprocess import decode_field_detections, cluster_kit_colors
 
@@ -312,8 +312,9 @@ class EFootballPcBrain:
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         self.sess = ort.InferenceSession(str(self.model_path), sess_options=opts)
+        self.input_size = validate_field_onnx_io(self.sess.get_inputs(), self.sess.get_outputs())
         self.input_name = self.sess.get_inputs()[0].name
-        print(f"[PC Brain] Model loaded successfully! Input: {self.input_name}")
+        print(f"[PC Brain] Field ONNX validated: {self.input_size}x{self.input_size}, 7 classes; input: {self.input_name}")
 
     def connect_socket(self):
         if self.sock is not None:
@@ -384,7 +385,7 @@ class EFootballPcBrain:
         tensor = np.expand_dims(tensor, axis=0)
 
         t0 = time.time()
-        preds = self.sess.run(None, {self.input_name: tensor})[0]  # shape: (1, 11, 2100)
+        preds = self.sess.run(None, {self.input_name: tensor})[0]  # (1,11,2100) or (1,11,8400)
         infer_time_ms = (time.time() - t0) * 1000.0
 
         # Decode all seven classes with *class-local* NMS. The ball channel is
