@@ -20,7 +20,12 @@ import mss
 import numpy as np
 import onnxruntime as ort
 from PIL import ImageGrab
-from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model
+try:
+    from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model
+except ModuleNotFoundError as exc:
+    if exc.name not in ("tools", "tools.pc_brain"):
+        raise
+    from runtime_safety import is_known_team, resolve_field_model
 
 # Class indices from YOLO11n field model
 CLASS_BALL = 0
