@@ -39,15 +39,28 @@ used as a release gate.
 | Metric | Legacy PC postprocessing | Iteration 3 postprocessing |
 |---|---:|---:|
 | Ball top-1 correct within 10px, 38 visible frames | 25/38 | **25/38** |
-| Any ball proposal correct within 10px | 26/38 | 27/38 |
+| Any ball proposal correct within 10px (exploratory candidate mode) | 26/38* | 27/38 |
 | Frames with ball proposals | 33/38 | 33/38 |
-| Total ball proposals (after top-8 selection/NMS) | 128 | 77 |
+| Total ball proposals (exploratory candidate mode) | 128* | 77 |
 | Player proposals (not labeled/scored) | 495 | 503 |
 | Referee proposals (not labeled/scored) | 11 | 13 |
 | Cursor proposals (not labeled/scored) | 47 | 47 |
 | Auxiliary menu/transition frames with a ball candidate | 0/10 | 0/10 |
 
-A single added correct non-top proposal appeared on `val-02-03`.
+**Round 5 audit correction (05/11/2026):** the exploratory 26/38 and
+128 candidate counts marked * above **must not be used as the legacy PC
+runtime baseline**. The actual legacy PC code returns **only one top-1 ball**
+per frame (if any), so by definition its "any hit" must equal "top-1 hit"
+(25/38 in this exploratory run) and its candidate count cannot exceed the
+number of proposal-bearing frames (33 here). The exploratory script had
+retained up to eight old candidates for its own diagnostics, which was a
+different protocol. The committed `benchmark_field_video.py` now encodes the
+actual legacy top-1 path. Its exact output is required before claiming any
+paired candidate gain; the 26→27 comparison is **withdrawn as a runtime
+improvement claim**.
+
+A single added correct non-top proposal appeared on `val-02-03` in the
+exploratory candidate comparison only.
 No top-1 hit was gained. More player/referee proposals are **not** evidence
 of improved player/referee recall because no corresponding ground-truth
 annotation was scored. Ball candidate count differs partly due to NMS.
