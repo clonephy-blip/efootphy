@@ -83,6 +83,18 @@ class PairingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate frame ID"):
             compare_reports(small, large)
 
+    def test_exploratory_old_multi_proposal_scores_rejected(self):
+        small, large = fixture(320, [True]), fixture(640, [True])
+        small["records"][0]["old"]["ball_any_hit_10px"] = False
+        with self.assertRaisesRegex(ValueError, "Legacy top-1 invariant"):
+            compare_reports(small, large)
+
+    def test_top1_cannot_be_correct_if_no_proposal_is_correct(self):
+        small, large = fixture(320, [True]), fixture(640, [True])
+        large["records"][0]["new"]["ball_any_hit_10px"] = False
+        with self.assertRaisesRegex(ValueError, "Impossible top-1"):
+            compare_reports(small, large)
+
     def test_nan_latency_rejected(self):
         small, large = fixture(320, [True]), fixture(640, [False])
         large["inference_ms_median"] = float("nan")
