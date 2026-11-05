@@ -136,18 +136,22 @@ def cluster_kit_colors(colors, prior=None, min_separation=28.0, ambiguous_margin
             return assigned, None
         if float(np.linalg.norm(centers[0] - centers[1])) < min_separation:
             return assigned, None
-    for _ in range(3):
-        distances = np.linalg.norm(data[:, None, :] - centers[None, :, :], axis=2)
-        groups = np.argmin(distances, axis=1)
-        for k in range(2):
-            matches = data[groups == k]
-            if len(matches):
-                # Smooth color changes, do not flip team IDs with detection order.
-                centers[k] = centers[k] * 0.8 + np.mean(matches, axis=0) * 0.2
+    # Guard assignments *before* changing color centers. Otherwise a single
+    # purple/mixed jersey midway between red and blue can drag one center
+    # toward itself and become falsely classified as TEAM_A / TEAM_B.
+    initial_dist = np.linalg.norm(data[:, None, :] - centers[None, :, :], axis=2)
+    confident = np.abs(initial_dist[:, 0] - initial_dist[:, 1]) >= ambiguous_margin
+    groups = np.argmin(initial_dist, axis=1)
+    for k in range(2):
+        matches = data[(groups == k) & confident]
+        if len(matches):
+            centers[k] = centers[k] * 0.8 + np.mean(matches, axis=0) * 0.2
+
     if float(np.linalg.norm(centers[0] - centers[1])) < min_separation:
         return assigned, prior
-    distances = np.linalg.norm(data[:, None, :] - centers[None, :, :], axis=2)
-    for i, row in enumerate(distances):
-        if abs(float(row[0] - row[1])) >= ambiguous_margin:
-            assigned[valid_ids[i]] = int(np.argmin(row))
+    # Report labels under the original trusted centers, never self-confirm by
+    # measuring a pixel again *after* its own contribution shifted a center.
+    for i, (group, usable) in enumerate(zip(groups, confident)):
+        if usable:
+            assigned[valid_ids[i]] = int(group)
     return assigned, (centers[0], centers[1])
