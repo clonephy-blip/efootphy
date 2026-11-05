@@ -42,7 +42,9 @@ data class HudPacket(
     val status: String = "PC Brain Active",
     val ball: BallData? = null,
     val players: List<PlayerData> = emptyList(),
-    val passLines: List<PassLine> = emptyList()
+    val passLines: List<PassLine> = emptyList(),
+    val sequence: Long = -1L,
+    val transportRttMs: Float = -1f
 ) {
     companion object {
         fun fromJson(jsonStr: String): HudPacket? {
@@ -53,6 +55,9 @@ data class HudPacket(
                 val fps = obj.optDouble("fps", 60.0).toFloat()
                 val lat = obj.optDouble("latency", 0.0).toFloat()
                 val status = obj.optString("status", "PC Brain Active")
+                val seq = obj.optLong("seq", -1L).takeIf { it >= 0 } ?: -1L
+                val rawRtt = obj.optDouble("transport_rtt_ms", -1.0)
+                val transportRtt = if (rawRtt.isFinite() && rawRtt in 0.0..10000.0) rawRtt.toFloat() else -1f
                 
                 var ball: BallData? = null
                 if (obj.has("ball") && !obj.isNull("ball")) {
@@ -111,7 +116,9 @@ data class HudPacket(
                     status = status,
                     ball = ball,
                     players = players,
-                    passLines = passes
+                    passLines = passes,
+                    sequence = seq,
+                    transportRttMs = transportRtt
                 )
             } catch (e: Exception) {
                 null
