@@ -28,9 +28,9 @@ jobs:
       - name: Dataset, normalization and release-gate regression tests
         run: python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
       - name: PC Brain dependency-free safety tests
-        run: python -m unittest tools.pc_brain.test_runtime_safety tools.pc_brain.test_transport_rtt tools.pc_brain.test_field_postprocess tools.pc_brain.test_benchmark_field_video tools.pc_brain.test_compare_field_models -v
+        run: python -m unittest tools.pc_brain.test_runtime_safety tools.pc_brain.test_transport_rtt tools.pc_brain.test_field_postprocess tools.pc_brain.test_benchmark_field_video tools.pc_brain.test_compare_field_models tools.pc_brain.test_compare_saved_checkpoints -v
       - name: Compile PC Brain entrypoint without importing Windows/ONNX dependencies
-        run: python -m py_compile tools/pc_brain/efootball_pc_brain.py tools/pc_brain/field_postprocess.py tools/pc_brain/runtime_safety.py tools/pc_brain/transport_rtt.py tools/pc_brain/benchmark_field_video.py tools/pc_brain/compare_field_models.py
+        run: python -m py_compile tools/pc_brain/efootball_pc_brain.py tools/pc_brain/field_postprocess.py tools/pc_brain/runtime_safety.py tools/pc_brain/transport_rtt.py tools/pc_brain/benchmark_field_video.py tools/pc_brain/compare_field_models.py tools/pc_brain/compare_saved_checkpoints.py
 
   android:
     runs-on: ubuntu-24.04
