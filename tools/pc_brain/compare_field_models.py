@@ -35,6 +35,14 @@ def _records_by_frame(report):
                 raise ValueError(f"Missing {policy} ball metrics for {frame_id}")
             if any(type(data[key]) is not bool for key in FIELDS):
                 raise ValueError(f"Invalid boolean scoring for {frame_id}")
+        # Actual legacy PC detector only returns one selected ball, so an
+        # old any-hit that differs from old top-1 means the benchmark compared
+        # a different exploratory candidate protocol instead of PC runtime.
+        if row["old"]["ball_any_hit_10px"] != row["old"]["ball_top1_hit_10px"]:
+            raise ValueError(f"Legacy top-1 invariant violated at {frame_id}")
+        for policy in POLICIES:
+            if row[policy]["ball_top1_hit_10px"] and not row[policy]["ball_any_hit_10px"]:
+                raise ValueError(f"Impossible top-1/any-hit mismatch at {frame_id}")
         result[frame_id] = row
     return result
 
