@@ -586,7 +586,8 @@ class FloatingOverlayService : Service() {
                     // 4. Draw Top Status Pill
                     val teamACount = packet.players.count { it.team == 0 }
                     val teamBCount = packet.players.count { it.team == 1 }
-                    val badgeText = "⚡ PC Brain: ${packet.fps.roundToInt()} FPS | ${packet.latencyMs.roundToInt()}ms | Đội A: $teamACount | Đội B: $teamBCount"
+                    val usbRtt = if (packet.transportRttMs >= 0f) " | USB RTT: ${packet.transportRttMs.roundToInt()}ms" else ""
+                    val badgeText = "⚡ PC Brain: ${packet.fps.roundToInt()} FPS | CPU: ${packet.latencyMs.roundToInt()}ms$usbRtt | Đội A: $teamACount | Đội B: $teamBCount"
                     textPaint.textSize = dp(11).toFloat()
                     textPaint.color = Color.WHITE
                     val tw = textPaint.measureText(badgeText)
