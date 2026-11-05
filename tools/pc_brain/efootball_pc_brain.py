@@ -20,7 +20,12 @@ import mss
 import numpy as np
 import onnxruntime as ort
 from PIL import ImageGrab
-from sklearn.cluster import KMeans
+try:
+    from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model
+except ModuleNotFoundError as exc:
+    if exc.name not in ("tools", "tools.pc_brain"):
+        raise
+    from runtime_safety import is_known_team, resolve_field_model
 
 # Class indices from YOLO11n field model
 CLASS_BALL = 0
@@ -38,6 +43,24 @@ class WindowCapture:
     def __init__(self, window_title="eFootball-Screen"):
         self.window_title = window_title
         self.user32 = ctypes.windll.user32
+        # Explicit pointer-sized HWND signatures for 64-bit Windows.
+        self.user32.FindWindowW.argtypes = (ctypes.wintypes.LPCWSTR, ctypes.wintypes.LPCWSTR)
+        self.user32.FindWindowW.restype = ctypes.wintypes.HWND
+        for name in ("IsWindow", "IsWindowVisible", "IsIconic"):
+            fn = getattr(self.user32, name)
+            fn.argtypes = (ctypes.wintypes.HWND,)
+            fn.restype = ctypes.wintypes.BOOL
+        self.user32.GetClientRect.argtypes = (ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.RECT))
+        self.user32.GetClientRect.restype = ctypes.wintypes.BOOL
+        self.user32.ClientToScreen.argtypes = (ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.POINT))
+        self.user32.ClientToScreen.restype = ctypes.wintypes.BOOL
+        self.user32.GetWindowTextLengthW.argtypes = (ctypes.wintypes.HWND,)
+        self.user32.GetWindowTextLengthW.restype = ctypes.c_int
+        self.user32.GetWindowTextW.argtypes = (ctypes.wintypes.HWND, ctypes.wintypes.LPWSTR, ctypes.c_int)
+        self.user32.GetWindowTextW.restype = ctypes.c_int
+        self._enum_callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+        self.user32.EnumWindows.argtypes = (self._enum_callback_type, ctypes.wintypes.LPARAM)
+        self.user32.EnumWindows.restype = ctypes.wintypes.BOOL
         self.last_warn_time = 0.0
         try:
             self.sct = mss.mss()
@@ -46,13 +69,13 @@ class WindowCapture:
 
     def find_target_window(self):
         hwnd = self.user32.FindWindowW(None, self.window_title)
-        if hwnd and self.user32.IsWindow(hwnd) and self.user32.IsWindowVisible(hwnd):
+        if hwnd and self.user32.IsWindow(hwnd) and self.user32.IsWindowVisible(hwnd) and not self.user32.IsIconic(hwnd):
             return hwnd
 
         # Fallback: search all visible windows for eFootball or scrcpy
         matches = []
         def enum_cb(h, _):
-            if self.user32.IsWindowVisible(h):
+            if self.user32.IsWindowVisible(h) and not self.user32.IsIconic(h):
                 length = self.user32.GetWindowTextLengthW(h)
                 if length > 0:
                     buff = ctypes.create_unicode_buffer(length + 1)
@@ -62,7 +85,7 @@ class WindowCapture:
                         matches.append((h, title))
             return True
 
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        WNDENUMPROC = self._enum_callback_type
         self.user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
         return matches[0][0] if matches else None
 
@@ -72,9 +95,11 @@ class WindowCapture:
             return None
 
         rect = ctypes.wintypes.RECT()
-        self.user32.GetClientRect(hwnd, ctypes.byref(rect))
+        if not self.user32.GetClientRect(hwnd, ctypes.byref(rect)):
+            return None
         pt = ctypes.wintypes.POINT(0, 0)
-        self.user32.ClientToScreen(hwnd, ctypes.byref(pt))
+        if not self.user32.ClientToScreen(hwnd, ctypes.byref(pt)):
+            return None
 
         width = rect.right - rect.left
         height = rect.bottom - rect.top
@@ -116,12 +141,8 @@ class WindowCapture:
                     frame = None
 
         if frame is None:
-            # Fallback: grab entire primary desktop
-            try:
-                img = ImageGrab.grab()
-                frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-            except Exception:
-                frame = np.zeros((360, 640, 3), dtype=np.uint8)
+            # Do not analyze unrelated desktop pixels or synthetic black frames.
+            return None, False
 
         # Check for black screen
         if frame.mean() < 5.0:
@@ -179,7 +200,7 @@ class TeamKitClassifier:
                 colors.append(c)
                 valid_indices.append(i)
 
-        teams = [0] * len(player_boxes)
+        teams = [-1] * len(player_boxes)
         if len(colors) >= 2:
             colors_arr = np.array(colors, dtype=np.float32)
             # Ultra-fast pure NumPy 2-means (1.5ms vs 200ms)
@@ -199,6 +220,8 @@ class TeamKitClassifier:
                 if np.any(~m0):
                     c1 = 0.8 * c1 + 0.2 * np.mean(colors_arr[~m0], axis=0)
 
+            d0 = np.sum((colors_arr - c0) ** 2, axis=1)
+            d1 = np.sum((colors_arr - c1) ** 2, axis=1)
             labels = (d0 > d1).astype(int)
             self.team0_center = c0
             self.team1_center = c1
@@ -214,7 +237,7 @@ class TacticalPassAnalyzer:
 
     @staticmethod
     def analyze(players, ball_pos, frame_w, frame_h):
-        if not players:
+        if not players or ball_pos is None:
             return None, []
 
         ball_possessor = None
@@ -224,6 +247,8 @@ class TacticalPassAnalyzer:
         if ball_pos:
             bx, by = ball_pos
             for p in players:
+                if not is_known_team(p.get("team")):
+                    continue
                 fx = (p["x1"] + p["x2"]) / 2.0
                 fy = p["y2"]
                 d = np.hypot(fx - bx, fy - by)
@@ -535,6 +560,17 @@ class EFootballPcBrain:
 
             # Grab screen frame
             frame_bgr, is_window = self.cap.grab()
+            if frame_bgr is None:
+                self.prev_ball = None
+                self.last_known_ball = None
+                self.ball_persistence = 0
+                self.kit_classifier.team0_center = None
+                self.kit_classifier.team1_center = None
+                self.send_packet({"timestamp": int(time.time() * 1000), "fps": 0.0,
+                                  "latency": 0.0, "status": "SCRCPY_UNAVAILABLE",
+                                  "ball": None, "players": [], "pass_lines": []})
+                time.sleep(0.2)
+                continue
 
             # AI Inference & Tactical Analysis
             ball_data, players, pass_lines, infer_ms = self.run_detection(frame_bgr)
@@ -578,9 +614,7 @@ class EFootballPcBrain:
 
 
 def main():
-    model_path = Path("C:/Users/PC/.gemini/antigravity/scratch/efootphy/tools/models/field_yolo11n_320.onnx")
-    if not model_path.exists():
-        model_path = Path("tools/models/field_yolo11n_320.onnx")
+    model_path = resolve_field_model(__file__, override=os.environ.get("EFOOTPHY_FIELD_MODEL"))
 
     brain = EFootballPcBrain(model_path=model_path, port=8888)
     try:
