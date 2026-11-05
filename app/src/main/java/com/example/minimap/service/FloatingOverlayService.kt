@@ -479,7 +479,7 @@ class FloatingOverlayService : Service() {
 
             if (packet != null) {
                 val now = SystemClock.elapsedRealtime()
-                val lifetime = 2500L
+                val lifetime = 350L
                 if (now - packet.receivedAtMs < lifetime) {
                     postDelayed(expire, 60L)
 
