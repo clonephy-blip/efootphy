@@ -48,3 +48,15 @@ The replay checks source clip hashes and source frame indices. Frozen Field640 o
 **Re-run:** 8 proposals across 5 frames; p50 5.519 ms / p95 8.098 ms, local CPU 2 threads, shadow stage only. Seeds changed: 0. Remaining proposals still include player/HUD artifacts in the inspected montage. Fewer proposals is **not** measured higher accuracy or tracking improvement. No verified shadow labels, no precision/recall, no calibrated 3D, no independent match. Both v0 and final pilot JSON/crops retained privately. Do not promote this heuristic as a reliable shadow detector.
 
 **Blockers and next reproducible work:** label separate ball/shadow pairs on timestamped aerial clips and add temporal association; verify camera/light assumptions before any metric trajectory. For end-to-end tests, record Windows CPU/GPU/provider, source/model hashes, capture size, USB RTT and HUD-off/on video. Current MSS capture can include letterboxing, occlusion and the phone's own HUD, and needs physical viewport/feedback tests. Minimap-PC integration and persistent identity remain pending. Runbook: `RUN_PC.md`.
+
+## 2026-11-09 — Step 04: successful Android CI and preserved evidence
+
+Implementation commit: `30a879d8fd4e3dd4e80cfc860b57ebf6d5498501`. [GitHub Actions run 42584545761](https://github.com/clonephy-blip/efootphy/actions/runs/42584545761) completed successfully for both data-tools and Android. Downloaded reports and checked their published SHA-256 before reading them: **48 JVM tests, 0 failures/errors/skips; Android lint 0 errors, 15 warnings; APK assembled successfully**. Warnings concern target/dependency updates, backup/icon configuration, bubble accessibility and text internationalization. Passing lint is not zero warnings or a physical-device certification.
+
+APK: 2,189,116 bytes, SHA-256 `33e353700a73e6d05adcc8ef44a0f96ae7b8ffaa9140fda9b164eff1652f4fdf`, artifact `13658387379`. ZIP inspection found no native model/ONNX libraries. No Windows/phone install or USB performance test was run here.
+
+Saved private audit + both shadow pilots as `efootphy_pc_shadow_qc_20261109.zip` in the user's ChatGPT files: 137 archive entries, SHA-256 `5242bd15c301bf0b139796a6848c40bce60dcb984b765bba684fd30d32fe7020`. Contains the checked labels/YAML, 10 validation images and private QC crops; do not copy into public GitHub.
+
+An additional Drive handover folder creation was not executed: automatic approval review failed due to usage limit, not a finding that the content was unsafe. Do not retry through another route to bypass that check. Existing GitHub handover is the canonical record.
+
+**Resume here:** annotate ball/shadow association on aerial clips with timestamps and held-out clip boundaries; verify pitch semantic IDs and a small learning canary; then measure the USB/HUD path on the real PC/phone. The current session improved architecture, bounded state handling, data traceability and QC. It did not train a new checkpoint, certify ball-shadow accuracy or complete 3D reconstruction.
