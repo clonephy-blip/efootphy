@@ -24,7 +24,7 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: tools/vision_qc/requirements-qc.txt
-      - run: python -m pip install -r tools/vision_qc/requirements-qc.txt
+      - run: python -m pip install -r tools/vision_qc/requirements-qc.txt -r tools/vision_qc/requirements-colab-qc.txt
       - name: Dataset, normalization and release-gate regression tests
         run: python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
 
@@ -72,3 +72,4 @@ jobs:
           name: efootphy-research-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
