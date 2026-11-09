@@ -9,7 +9,8 @@ The delivery architecture is **Android game → USB/scrcpy → PC vision/trackin
 1. `CURRENT_STATE.json`: working branch, checkpoints, gates and next actions.
 2. `DATASETS.md`: which source folder belongs to which task; 32-point and 18-point schemas are different.
 3. `JOURNAL.md`: changes, actual test commands, measured results and rejected ideas.
-4. `../../AGENTS.md`: contributor rules, including a progress note for every meaningful step.
+4. `RUN_PC.md`: beginner-friendly Windows/USB run instructions.
+5. `../../AGENTS.md`: contributor rules, including a progress note for every meaningful step.
 
 Working integration branch: `work/pc-hud-shadow-20261109`. Source bases: PC research `324b9e9dfa7f4a821e16e33c3f36d0838f234e5b` plus Colab packaging fix `70d57ce9c50e223ae14918be8a362bd0b720618d`. This is research, not a deployed release. `main` still contains older app code; a handover index on main does not mean the integration code has been released.
 
@@ -30,3 +31,5 @@ Use ball detections, a separately detected shadow, player occlusion, camera moti
 ## Current concrete work
 
 Read the current journal for progress on data audit, the PC-only mode, shadow research and tests. Do not restart broad training until the pitch annotation contract has been checked.
+
+This session completed the raw schema audit, PC HUD-only implementation and 38-frame shadow pilot. Read Step 02/03 in the journal: the pitch checkpoint remains rejected and the shadow heuristic remains opt-in research.

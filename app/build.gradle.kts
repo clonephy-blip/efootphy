@@ -23,6 +23,4 @@ android {
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
-    implementation(project(":vision-core"))
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 }

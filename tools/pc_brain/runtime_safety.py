@@ -6,6 +6,21 @@ wrong file. Never infer a football team from a missing classifier result.
 from pathlib import Path
 
 
+def select_execution_providers(requested, available):
+    """Choose an installed provider explicitly; requested GPU must not silently fall back."""
+    requested = str(requested).strip().lower()
+    names = {'cpu':'CPUExecutionProvider', 'cuda':'CUDAExecutionProvider', 'dml':'DmlExecutionProvider'}
+    if requested == 'auto':
+        chosen = next((names[k] for k in ('cuda','dml','cpu') if names[k] in available), None)
+    elif requested in names:
+        chosen = names[requested] if names[requested] in available else None
+    else:
+        raise ValueError('EFOOTPHY_EXECUTION_PROVIDER must be auto, cpu, cuda or dml')
+    if chosen is None:
+        raise RuntimeError(f'Requested execution provider {requested!r} is not installed; available={available}')
+    return [chosen]+(['CPUExecutionProvider'] if chosen != names['cpu'] and names['cpu'] in available else [])
+
+
 def resolve_field_model(script_file, override=None, home=None):
     """Use an explicit model override or a known local efootphy model location."""
     script_dir = Path(script_file).resolve().parent
