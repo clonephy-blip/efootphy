@@ -1,0 +1,3 @@
+# Lightweight notebook/ONNX contract tests; does not import ORT or train models.
+onnx==1.23.2
+nbformat==5.11.1
