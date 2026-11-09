@@ -60,3 +60,13 @@ Saved private audit + both shadow pilots as `efootphy_pc_shadow_qc_20261109.zip`
 An additional Drive handover folder creation was not executed: automatic approval review failed due to usage limit, not a finding that the content was unsafe. Do not retry through another route to bypass that check. Existing GitHub handover is the canonical record.
 
 **Resume here:** annotate ball/shadow association on aerial clips with timestamps and held-out clip boundaries; verify pitch semantic IDs and a small learning canary; then measure the USB/HUD path on the real PC/phone. The current session improved architecture, bounded state handling, data traceability and QC. It did not train a new checkpoint, certify ball-shadow accuracy or complete 3D reconstruction.
+
+## 2026-11-09 — Step 05: user-reported installation failure / separate PC HUD identity
+
+**Observed on the user's actual device:** streamed `adb install -r --no-incremental` rejected the previous APK with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`: installed `com.example.minimap` and new APK signatures differ. This establishes an install blocker, not a tracking/runtime failure. Do not bypass signature verification or uninstall/clear the existing app by default.
+
+**Change:** PC HUD is now a separate application ID `com.example.minimap.pchud`, label `eFootPhy PC HUD`, versionCode 3 / `0.2.1-pc-hud`. Kotlin namespace and concrete launcher/service class names remain `com.example.minimap.*`. This allows installation beside the old package without migrating or deleting its data. ADB instructions added in `RUN_PC.md`; explicitly stop the old app before the PC HUD listens on port 8888.
+
+**Validation requested:** CI builds/lints APK and core tests, then checks the actual packaged application ID and fully qualified launcher with `aapt dump badging`, verifies APK signature with `apksigner verify --verbose --print-certs`, and records APK SHA-256. New APK/device install pending at this change. No model, dataset, training or vision algorithm changed; prior model hashes remain applicable.
+
+**Signing limitation:** debug-keystore cache retains the current CI key while available, but is not durable release-key management. Keep a stable protected signing key for future same-ID updates. This step resolves collision with the legacy package; it does not recover its private signing key.

@@ -9,7 +9,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="eFootball AI Assistant"
+        android:label="eFootPhy PC HUD"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".ui.PcHudActivity" android:exported="true">

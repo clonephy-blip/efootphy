@@ -30,7 +30,7 @@
       "status": "structurally valid; move trial inference to PC"
     }
   },
-  "current_step": "Implementation published; Android build/lint and local/CI regression checks passed; physical device validation pending",
+  "current_step": "Fix user-reported signature mismatch with separate PC HUD application ID; CI pending",
   "completed_this_session": [
     "PC-only launcher/service; Android ONNX/MediaProjection code archived outside app source set",
     "current four YAML schemas verified and fingerprinted",
@@ -109,7 +109,28 @@
     "visual_review": "Remaining proposals include player/HUD artifacts; default off, not accepted as a reliable shadow detector."
   },
   "implementation_commit": "30a879d8fd4e3dd4e80cfc860b57ebf6d5498501",
-  "apk": {
+  "private_qc_archive": {
+    "filename": "efootphy_pc_shadow_qc_20261109.zip",
+    "sha256": "5242bd15c301bf0b139796a6848c40bce60dcb984b765bba684fd30d32fe7020",
+    "saved": "user ChatGPT files; source assets excluded from GitHub"
+  },
+  "collaboration_note": "Extra Drive handover folder was NOT created: automatic approval review failed because of usage limit. Existing GitHub handover remains canonical.",
+  "android_identity": {
+    "legacy_application_id": "com.example.minimap",
+    "pc_hud_application_id": "com.example.minimap.pchud",
+    "code_namespace": "com.example.minimap",
+    "launcher": "com.example.minimap.ui.PcHudActivity",
+    "version_code": 3,
+    "version_name": "0.2.1-pc-hud",
+    "label": "eFootPhy PC HUD"
+  },
+  "installation_issue": {
+    "user_error": "INSTALL_FAILED_UPDATE_INCOMPATIBLE",
+    "cause": "Existing legacy package and previous PC HUD APK have different signing certificates",
+    "resolution": "Install separate PC HUD package beside legacy; preserve old application/data; stop old HUD to avoid port conflict",
+    "status": "new APK awaiting CI; device install unverified"
+  },
+  "previous_apk": {
     "file": "efootphy-pc-hud-30a879d.apk",
     "bytes": 2189116,
     "sha256": "33e353700a73e6d05adcc8ef44a0f96ae7b8ffaa9140fda9b164eff1652f4fdf",
@@ -117,10 +138,9 @@
     "contains_native_onnx_libraries": false,
     "physical_install_tested": false
   },
-  "private_qc_archive": {
-    "filename": "efootphy_pc_shadow_qc_20261109.zip",
-    "sha256": "5242bd15c301bf0b139796a6848c40bce60dcb984b765bba684fd30d32fe7020",
-    "saved": "user ChatGPT files; source assets excluded from GitHub"
-  },
-  "collaboration_note": "Extra Drive handover folder was NOT created: automatic approval review failed because of usage limit. Existing GitHub handover remains canonical."
+  "apk": {
+    "status": "pending new package CI",
+    "application_id": "com.example.minimap.pchud",
+    "physical_install_tested": false
+  }
 }

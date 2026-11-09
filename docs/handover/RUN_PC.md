@@ -13,6 +13,23 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install numpy opencv-python-headless mss Pillow onnxruntime
 ```
 
+### Cài APK qua ADB / lỗi chữ ký bản cũ
+
+Bản PC HUD mới dùng application ID riêng `com.example.minimap.pchud`, tên trên điện thoại **eFootPhy PC HUD**. Có thể cài cạnh bản cũ `com.example.minimap` mà không gỡ hay xóa dữ liệu của bản cũ. Java/Kotlin namespace vẫn là `com.example.minimap`; không đổi tên các lớp Activity/Service theo application ID.
+
+Tải APK mới thành `efootphy-pc-hud-v0.2.1.apk` vào Downloads, mở PowerShell:
+
+```powershell
+cd C:\scrcpy-win64-v4.1
+.\adb.exe -d install -r --no-incremental "$env:USERPROFILE\Downloads\efootphy-pc-hud-v0.2.1.apk"
+.\adb.exe -d shell am force-stop com.example.minimap
+.\adb.exe -d shell am start -n com.example.minimap.pchud/com.example.minimap.ui.PcHudActivity
+```
+
+`force-stop` chỉ dừng app cũ để nó không giữ cổng HUD 8888. Dùng HUD của app mới. Nếu cài đặt vẫn báo `Failure [...]`, giữ nguyên dòng lỗi; không mặc định gỡ/xóa dữ liệu.
+
+Lỗi đã gặp ở APK trước: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, chữ ký bản đang cài không khớp APK mới cùng package. Không thể sửa chỉ bằng `install -r`, `-d` hay cài lại cùng APK đó. Các bản cập nhật cùng application ID sau này phải giữ đúng khóa ký. Keystore debug đang được GitHub Actions cache; cache không thay thế cơ chế lưu khóa ký phát hành lâu dài.
+
 Đây là cấu hình CPU ban đầu, chưa phải bộ phiên bản runtime Windows đã chứng nhận. GPU cần package/provider phù hợp từ [hướng dẫn ONNX Runtime](https://onnxruntime.ai/docs/install/). Chỉ cài một biến thể ORT trong một môi trường. Chọn `cuda` hoặc `dml` chỉ khi môi trường đã có provider tương ứng; yêu cầu GPU thiếu provider sẽ báo lỗi. `auto` dùng provider khả dụng và in tên thật ra terminal; có tên GPU chưa chứng minh toàn bộ graph chạy trên GPU.
 
 ## Mỗi lần chạy

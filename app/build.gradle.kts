@@ -7,11 +7,11 @@ android {
     namespace = "com.example.minimap"
     compileSdk = 35
     defaultConfig {
-        applicationId = "com.example.minimap"
+        applicationId = "com.example.minimap.pchud"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0-research"
+        versionCode = 3
+        versionName = "0.2.1-pc-hud"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

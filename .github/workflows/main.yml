@@ -61,6 +61,21 @@ jobs:
           fi
       - name: Core regression tests, Android lint and APK
         run: gradle :vision-core:test :app:lintDebug :app:assembleDebug --stacktrace
+      - name: Verify standalone PC HUD identity and APK signing
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          mkdir -p app/build/reports
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > app/build/reports/apk-identity.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk" > app/build/reports/apk-signing.txt
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          text = Path('app/build/reports/apk-identity.txt').read_text()
+          assert re.search(r"package: name='com.example.minimap.pchud' versionCode='3'", text), text
+          assert "launchable-activity: name='com.example.minimap.ui.PcHudActivity'" in text, text
+          print('Verified separate PC HUD package and unchanged Activity namespace')
+          PY
+          sha256sum "$apk" > app/build/reports/apk-sha256.txt
       - name: Test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -70,6 +85,7 @@ jobs:
             vision-core/build/reports/tests/test/
             vision-core/build/test-results/test/
             app/build/reports/lint-results-debug.*
+            app/build/reports/apk-*.txt
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
