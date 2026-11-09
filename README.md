@@ -13,6 +13,8 @@ AI tiếp tục dự án cần đọc [bàn giao](docs/handover/START_HERE.md), 
 | `legacy/android-local` | Mã quét minimap trên điện thoại cũ, được giữ để tham khảo, không nằm trong APK. |
 | `vision-core` | Thư viện hình học và kiểm thử JVM trước đây; hiện chưa kết nối vào PC runtime. |
 
+**Người mới:** xem [hướng dẫn tải bộ PC và làm từng bước](docs/handover/BEGINNER_PC.vi.md).
+
 **Chạy thử:** làm theo [RUN_PC.md](docs/handover/RUN_PC.md). Model field nằm trên PC; APK không nhận gói model. scrcpy chạy `--no-control`, không phát lệnh điều khiển game. Bộ minimap mới sẽ được nối vào PC sau; hiện runtime chưa hợp nhất minimap với sân.
 
 **Kết quả hiện có:** kiểm tra cùng 38 khung hình cho ball top-1 đúng trong 10 pixel: Field 640 cũ 25/38, Field 320 mới 11/38. Model 32 mốc sân mới vẫn không đạt để triển khai hình học. Chi tiết và giới hạn phép đo nằm trong nhật ký. Không coi FPS vẽ HUD là FPS AI hoặc FPS game.

@@ -2,6 +2,8 @@
 
 Đây là bản thử nghiệm của nhánh `work/pc-hud-shadow-20261109`, không phải APK quét màn hình trên điện thoại trước đây.
 
+**Người mới:** dùng [hướng dẫn từng bước](BEGINNER_PC.vi.md) và ZIP PC đã có sẵn model được gửi riêng. Phần dưới dành cho chạy từ checkout mã nguồn.
+
 ## Chuẩn bị một lần
 
 1. Lấy APK từ lần GitHub Actions **thành công đúng commit của PR #9**. Cài lên Android, mở ứng dụng, bấm **BẬT HUD**, cấp quyền hiển thị trên ứng dụng khác rồi quay lại bấm **BẬT HUD**. Dừng được từ ứng dụng hoặc thông báo.

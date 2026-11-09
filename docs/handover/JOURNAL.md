@@ -78,3 +78,15 @@ An additional Drive handover folder creation was not executed: automatic approva
 Delivered filename `efootphy-pc-hud-v0.2.1.apk`, 2,189,116 bytes, APK SHA-256 `bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44`. Application ID `com.example.minimap.pchud`; concrete launch class `com.example.minimap.ui.PcHudActivity`; versionCode 3. Signing certificate SHA-256 `c14c74c1e3264ce9992e0e3da0466ce4f67a2611cd22e28d944e37ac0edc4ac1` (public certificate fingerprint, not private key). APK artifact `13660087365`.
 
 Physical installation is not confirmed yet. The user's next command is the ADB install in `RUN_PC.md`, using the new v0.2.1 filename. Keep legacy package data; stop legacy app rather than uninstalling it. Wait for `Success` or the exact new `Failure [...]` before claiming the device installation passed.
+
+## 2026-11-09 — Step 06: beginner PC setup and private ready-to-run bundle
+
+**User need:** the APK alone was confusing; provide beginner instructions explaining the separate PC analysis program, exact folders and click order.
+
+**Change:** added `BEGINNER_PC.vi.md`, one-time `01_CAI_DAT_PC.bat`, daily `02_CHAY_TRO_LY.bat`, fixed CPU requirements and a private ZIP builder. The daily wrapper sets model/runtime paths relative to its folder, defaults to existing `C:\scrcpy-win64-v4.1`, CPU and shadow evidence off. The ZIP contains only runtime sources, instructions, existing Field640 weights and standalone PC HUD v0.2.1 APK. No train/validation labels, videos, old Android capture code, bridge.js or other models. Private ZIP is delivered separately, not committed to GitHub.
+
+**Artifact contracts:** Field640 SHA `3d4119b1247849a9ecc92ee31498b78b0f9e6ddd6815fc8485db2c2c1abc47c6`; APK SHA `bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44`. This reuses existing research weights; no training or accuracy improvement is claimed. APK app ID remains `com.example.minimap.pchud`.
+
+**Local validation:** `PYTHONPATH=/tmp/efootphy-qc-deps-20261109 python -m unittest tools.pc_brain.test_windows_bundle -v`: 2 tests passed. Incorrect model/APK digests stop packaging; actual ZIP hashes and required setup files checked; repeated input produces the same ZIP. `git diff --check` passed. New Windows CI job runs the real one-time installer without interactive pause and a native import smoke check; pending at this commit. This job does not validate a real scrcpy window, camera, game or phone USB path.
+
+**Beginner flow:** extract ZIP into `C:\eFootPhyPC`; install full x64 Python 3.12 if missing; double-click setup once; enable the new phone HUD and enter game; close old scrcpy windows; double-click daily runner. Guide defines the separate meanings of dependency-ready, mirrored game and HUD-connected. CPU is a connection baseline, not a 60 FPS certification; PC GPU selection requires measured hardware information.
