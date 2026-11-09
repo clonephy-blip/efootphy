@@ -30,7 +30,7 @@
       "status": "structurally valid; move trial inference to PC"
     }
   },
-  "current_step": "Fix user-reported signature mismatch with separate PC HUD application ID; CI pending",
+  "current_step": "PC HUD v0.2.1 separate-package APK built and identity/signature verified; awaiting user device install",
   "completed_this_session": [
     "PC-only launcher/service; Android ONNX/MediaProjection code archived outside app source set",
     "current four YAML schemas verified and fingerprinted",
@@ -69,13 +69,15 @@
       "skip_reason": "optional PyTorch training dependencies absent"
     },
     "android_ci": {
-      "run_id": 42584545761,
+      "run_id": 42588368208,
       "status": "success",
-      "implementation_commit": "30a879d8fd4e3dd4e80cfc860b57ebf6d5498501",
+      "implementation_commit": "741808f8bc6beab598c024c4ab888550cfdf3e0c",
       "jvm_tests": 48,
       "jvm_failures": 0,
       "lint_errors": 0,
-      "lint_warnings": 15
+      "lint_warnings": 15,
+      "package_identity_verified": true,
+      "apk_signature_verified": true
     },
     "physical_windows_android": "not run"
   },
@@ -128,7 +130,7 @@
     "user_error": "INSTALL_FAILED_UPDATE_INCOMPATIBLE",
     "cause": "Existing legacy package and previous PC HUD APK have different signing certificates",
     "resolution": "Install separate PC HUD package beside legacy; preserve old application/data; stop old HUD to avoid port conflict",
-    "status": "new APK awaiting CI; device install unverified"
+    "status": "Separate-package APK built and verified; user device install confirmation still pending"
   },
   "previous_apk": {
     "file": "efootphy-pc-hud-30a879d.apk",
@@ -139,8 +141,16 @@
     "physical_install_tested": false
   },
   "apk": {
-    "status": "pending new package CI",
+    "file": "efootphy-pc-hud-v0.2.1.apk",
+    "bytes": 2189116,
+    "sha256": "bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44",
+    "artifact_id": 13660087365,
     "application_id": "com.example.minimap.pchud",
+    "launcher": "com.example.minimap.ui.PcHudActivity",
+    "certificate_sha256": "c14c74c1e3264ce9992e0e3da0466ce4f67a2611cd22e28d944e37ac0edc4ac1",
+    "signature_verified_in_ci": true,
+    "reported_apk_sha256": "bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44",
     "physical_install_tested": false
-  }
+  },
+  "android_build_commit": "741808f8bc6beab598c024c4ab888550cfdf3e0c"
 }
