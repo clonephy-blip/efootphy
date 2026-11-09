@@ -1,0 +1,102 @@
+# Progress journal
+
+## 2026-11-09 — Step 01: establish the PC architecture and common handover
+
+**User request:** PC reads Android gameplay over USB and performs CPU/GPU analysis; Android only draws HUD/ball paths. Keep notes after changes so other AIs can continue. Investigate the ball's shadow as additional evidence during aerial motion.
+
+**Done:** fetched current branch heads; integrated PC research base `324b9e9` and Colab packaging fixes `70d57ce` in an isolated local branch without changing existing branches. Read the current private QC report. Verified access to the Drive source folders, and found 93 train-label files in the 32-point pitch set. Added contributor rules, architecture, dataset-role index and machine-readable state.
+
+**Evidence:** all three prior checkpoints have 30 epochs; frozen full-screen ball check is 11/38 for new Field 320 versus 25/38 for source Field 640; pitch pose AP remains zero. These prior results are not new training performed in this step.
+
+**Not yet verified:** raw YAML/annotation audit; new shadow algorithms; PC-only Android cleanup; new unit/video tests; physical USB/GPU/phone behavior. Nothing has been promoted to a production model.
+
+**Next:** materialize only the current YAML and pitch annotations needed for audit, record actual schemas, then implement bounded shadow evidence and calibrated geometry with independent tests. Keep all private source content outside this public repository.
+
+## 2026-11-09 — Step 02: identify source schemas and reject failed pitch deployment
+
+**Goal:** make every dataset's role explicit before more training. Read all four current `data.yaml` files; recorded their exact class order, keypoint count and SHA-256 in `DATASETS.md`. Downloaded/read all 93 train and 10 valid pitch32 annotations, the 10 valid images, and a separate 12-file pitch18 sample. Private artifacts: `label_audit_summary.json`, `pitch32_pixel_qc.json`, source YAML/labels/images.
+
+**Measured:** no invalid column counts, visibility flags or visible normalized coordinates in the checked files. This is a structural audit, not semantic certification. Pitch32 model SHA `56e988423891528f587e0cf5256b1d4406287f7823d997c370ebc1dcb3e9f3c1`, OpenCV DNN CLASSIC, direct 640×640 RGB input, top-scoring pitch box, numeric keypoint IDs matched, predicted keypoint confidence ignored for this XY diagnosis: **0/92 v2 points within 5 px, 0/92 within 10 px; median 191.8623 px, mean 201.9892 px**. Visibility-1 points excluded from this 92-point score. Same source validation, not independent-match QC. Do not compare this median with old 98-pixel figures without reproducing identical preprocessing.
+
+**Decision:** failed checkpoint stays blocked from geometry deployment. A valid label format does not explain why learning failed. Next: verify a shared semantic diagram and test whether a tiny train subset learns the right coordinates before paying for another full run. Do not merge pitch18/pitch32 labels.
+
+## 2026-11-09 — Step 03: implement PC analysis + Android HUD and bounded shadow evidence
+
+**Changed:** `app` launcher/service now only receives and renders PC observations. Archived eight local-capture/model files under `legacy/android-local` outside the APK source set; removed Android ONNX and vision-core app dependencies, MediaProjection permission/entry points. HUD distinguishes observed yellow ball and short predicted dashed gray ball, expires stale results and checks aspect ratio. Socket shutdown closes the active client. Windows launcher validates USB/model paths, uses read-only scrcpy and environment overrides. PC captures only the exact scrcpy window, selects available ORT providers explicitly, uses monotonic ball timestamps, limits prediction to 150 ms, and disables unvalidated possession/pass hints.
+
+**Shadow module:** optional local dark-on-grass proposals; candidates never change the chosen ball. Separate ray-geometry function requires a current camera matrix, camera epoch and directional-light vector. Unknown/stale/degenerate geometry returns no 3D estimate. Runtime emits `UNCALIBRATED` and no ball height. Default `EFOOTPHY_SHADOW_EVIDENCE=0`.
+
+**Local validation commands:**
+
+```bash
+PYTHONPATH=/tmp/efootphy-qc-deps-20261109 python -m unittest discover -s tools/pc_brain -t . -p 'test_*.py' -v
+PYTHONPATH=/tmp/efootphy-qc-deps-20261109 python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
+python -m compileall -q tools/pc_brain
+git diff --check
+```
+
+**Results:** 73 PC tests passed, including calibrated synthetic geometry, bad calibration, provider choice, short prediction/reacquisition, no shadow-only ball, and exact-window capture selection. 213 data-tool tests ran: 206 passed, 7 skipped because optional PyTorch training dependencies are absent. These do not test native ORT, GPU, Windows capture or a physical phone. Android lint/build CI pending at this commit.
+
+**Offline shadow pilot command:** from repo root, using the existing private research inputs alongside this checkout:
+
+```bash
+PYTHONPATH=/tmp/efootphy-qc-deps-20261109 python -m tools.pc_brain.shadow_pilot --clips-zip ../post-train-qc-20261109/research-inputs/efootphy-round2-source-clips.zip --detections ../post-train-qc-20261109/outputs/field640_source_frozen38.json --output-dir ../pc-data-audit-20261109/shadow-pilot
+```
+
+The replay checks source clip hashes and source frame indices. Frozen Field640 outputs seed the shadow search; ground truth is not used for search. Model SHA `3d4119b1247849a9ecc92ee31498b78b0f9e6ddd6815fc8485db2c2c1abc47c6`. Same 38 visible reviewed research frames, 33 with detector seeds. Initial pilot: 92 proposals across 25 frames, p50 3.877 ms / p95 5.631 ms. Visual review exposed text/control-marker false positives. One bounded correction excludes bright neutral/cyan edges and tightens green hue; this can also reject real shadows near white lines.
+
+**Re-run:** 8 proposals across 5 frames; p50 5.519 ms / p95 8.098 ms, local CPU 2 threads, shadow stage only. Seeds changed: 0. Remaining proposals still include player/HUD artifacts in the inspected montage. Fewer proposals is **not** measured higher accuracy or tracking improvement. No verified shadow labels, no precision/recall, no calibrated 3D, no independent match. Both v0 and final pilot JSON/crops retained privately. Do not promote this heuristic as a reliable shadow detector.
+
+**Blockers and next reproducible work:** label separate ball/shadow pairs on timestamped aerial clips and add temporal association; verify camera/light assumptions before any metric trajectory. For end-to-end tests, record Windows CPU/GPU/provider, source/model hashes, capture size, USB RTT and HUD-off/on video. Current MSS capture can include letterboxing, occlusion and the phone's own HUD, and needs physical viewport/feedback tests. Minimap-PC integration and persistent identity remain pending. Runbook: `RUN_PC.md`.
+
+## 2026-11-09 — Step 04: successful Android CI and preserved evidence
+
+Implementation commit: `30a879d8fd4e3dd4e80cfc860b57ebf6d5498501`. [GitHub Actions run 42584545761](https://github.com/clonephy-blip/efootphy/actions/runs/42584545761) completed successfully for both data-tools and Android. Downloaded reports and checked their published SHA-256 before reading them: **48 JVM tests, 0 failures/errors/skips; Android lint 0 errors, 15 warnings; APK assembled successfully**. Warnings concern target/dependency updates, backup/icon configuration, bubble accessibility and text internationalization. Passing lint is not zero warnings or a physical-device certification.
+
+APK: 2,189,116 bytes, SHA-256 `33e353700a73e6d05adcc8ef44a0f96ae7b8ffaa9140fda9b164eff1652f4fdf`, artifact `13658387379`. ZIP inspection found no native model/ONNX libraries. No Windows/phone install or USB performance test was run here.
+
+Saved private audit + both shadow pilots as `efootphy_pc_shadow_qc_20261109.zip` in the user's ChatGPT files: 137 archive entries, SHA-256 `5242bd15c301bf0b139796a6848c40bce60dcb984b765bba684fd30d32fe7020`. Contains the checked labels/YAML, 10 validation images and private QC crops; do not copy into public GitHub.
+
+An additional Drive handover folder creation was not executed: automatic approval review failed due to usage limit, not a finding that the content was unsafe. Do not retry through another route to bypass that check. Existing GitHub handover is the canonical record.
+
+**Resume here:** annotate ball/shadow association on aerial clips with timestamps and held-out clip boundaries; verify pitch semantic IDs and a small learning canary; then measure the USB/HUD path on the real PC/phone. The current session improved architecture, bounded state handling, data traceability and QC. It did not train a new checkpoint, certify ball-shadow accuracy or complete 3D reconstruction.
+
+## 2026-11-09 — Step 05: user-reported installation failure / separate PC HUD identity
+
+**Observed on the user's actual device:** streamed `adb install -r --no-incremental` rejected the previous APK with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`: installed `com.example.minimap` and new APK signatures differ. This establishes an install blocker, not a tracking/runtime failure. Do not bypass signature verification or uninstall/clear the existing app by default.
+
+**Change:** PC HUD is now a separate application ID `com.example.minimap.pchud`, label `eFootPhy PC HUD`, versionCode 3 / `0.2.1-pc-hud`. Kotlin namespace and concrete launcher/service class names remain `com.example.minimap.*`. This allows installation beside the old package without migrating or deleting its data. ADB instructions added in `RUN_PC.md`; explicitly stop the old app before the PC HUD listens on port 8888.
+
+**Validation requested:** CI builds/lints APK and core tests, then checks the actual packaged application ID and fully qualified launcher with `aapt dump badging`, verifies APK signature with `apksigner verify --verbose --print-certs`, and records APK SHA-256. New APK/device install pending at this change. No model, dataset, training or vision algorithm changed; prior model hashes remain applicable.
+
+**Signing limitation:** debug-keystore cache retains the current CI key while available, but is not durable release-key management. Keep a stable protected signing key for future same-ID updates. This step resolves collision with the legacy package; it does not recover its private signing key.
+
+### Step 05 result — APK ready for user installation
+
+[CI run 42588368208](https://github.com/clonephy-blip/efootphy/actions/runs/42588368208), source commit `741808f8bc6beab598c024c4ab888550cfdf3e0c`: both jobs succeeded, including APK build/lint, actual package/launcher checks and `apksigner verify`. Downloaded APK/report archives match their GitHub artifact SHA-256; APK bytes also match the hash generated by CI.
+
+Delivered filename `efootphy-pc-hud-v0.2.1.apk`, 2,189,116 bytes, APK SHA-256 `bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44`. Application ID `com.example.minimap.pchud`; concrete launch class `com.example.minimap.ui.PcHudActivity`; versionCode 3. Signing certificate SHA-256 `c14c74c1e3264ce9992e0e3da0466ce4f67a2611cd22e28d944e37ac0edc4ac1` (public certificate fingerprint, not private key). APK artifact `13660087365`.
+
+Physical installation is not confirmed yet. The user's next command is the ADB install in `RUN_PC.md`, using the new v0.2.1 filename. Keep legacy package data; stop legacy app rather than uninstalling it. Wait for `Success` or the exact new `Failure [...]` before claiming the device installation passed.
+
+## 2026-11-09 — Step 06: beginner PC setup and private ready-to-run bundle
+
+**User need:** the APK alone was confusing; provide beginner instructions explaining the separate PC analysis program, exact folders and click order.
+
+**Change:** added `BEGINNER_PC.vi.md`, one-time `01_CAI_DAT_PC.bat`, daily `02_CHAY_TRO_LY.bat`, fixed CPU requirements and a private ZIP builder. The daily wrapper sets model/runtime paths relative to its folder, defaults to existing `C:\scrcpy-win64-v4.1`, CPU and shadow evidence off. The ZIP contains only runtime sources, instructions, existing Field640 weights and standalone PC HUD v0.2.1 APK. No train/validation labels, videos, old Android capture code, bridge.js or other models. Private ZIP is delivered separately, not committed to GitHub.
+
+**Artifact contracts:** Field640 SHA `3d4119b1247849a9ecc92ee31498b78b0f9e6ddd6815fc8485db2c2c1abc47c6`; APK SHA `bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44`. This reuses existing research weights; no training or accuracy improvement is claimed. APK app ID remains `com.example.minimap.pchud`.
+
+**Local validation:** `PYTHONPATH=/tmp/efootphy-qc-deps-20261109 python -m unittest tools.pc_brain.test_windows_bundle -v`: 2 tests passed. Incorrect model/APK digests stop packaging; actual ZIP hashes and required setup files checked; repeated input produces the same ZIP. `git diff --check` passed. New Windows CI job runs the real one-time installer without interactive pause and a native import smoke check; pending at this commit. This job does not validate a real scrcpy window, camera, game or phone USB path.
+
+**Beginner flow:** extract ZIP into `C:\eFootPhyPC`; install full x64 Python 3.12 if missing; double-click setup once; enable the new phone HUD and enter game; close old scrcpy windows; double-click daily runner. Guide defines the separate meanings of dependency-ready, mirrored game and HUD-connected. CPU is a connection baseline, not a 60 FPS certification; PC GPU selection requires measured hardware information.
+
+### Step 06 result — beginner bundle ready
+
+Source commit `ec67a58588fb8deb235d7854ee62bacb7620348f`. Local PC suite: **75 tests passed**. [CI run 42590185243](https://github.com/clonephy-blip/efootphy/actions/runs/42590185243), Windows job `129069639465`: the actual BAT installer created a venv, installed fixed CPU packages and completed native Windows import smoke successfully. This is a Windows CI result, not proof of model inference/USB capture/game FPS on the user's PC.
+
+Confirmed original Field640 ONNX input `[1,3,640,640]`, output `[1,11,8400]`. Built private ZIP using `python -m tools.pc_brain.build_windows_bundle --model PRIVATE/model.onnx --apk PRIVATE/efootphy-pc-hud-v0.2.1.apk --output PRIVATE/efootphy_PC_START_v0.2.1.zip --model-sha256 3d4119b1247849a9ecc92ee31498b78b0f9e6ddd6815fc8485db2c2c1abc47c6 --apk-sha256 bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44 --source-commit ec67a58588fb8deb235d7854ee62bacb7620348f`. `PRIVATE` paths are placeholders for the user's existing local artifacts; never publish their source bytes.
+
+ZIP filename `efootphy_PC_START_v0.2.1.zip`, 11,846,639 bytes, 14 entries, SHA-256 `2c061a3d88432c891afc4d415f8f45ea47bfe63a0fdc7f5d77a73ce48cf21e33`. Saved as a separate private user file. Beginner receives the ZIP plus click-by-click instructions; no custom model path needed. Bundle has `bundle_manifest.json` with hashes of all files. It reuses the already built/signed APK and existing model; no new checkpoint.
+
+**Next interaction:** confirm one-time setup shows `DA CAI XONG`, mirrored gameplay appears, then `CONNECTED TO PHONE HUD`. On failure obtain the exact first error and the actual PC hardware before changing GPU dependencies. GPU acceleration, model/USB end-to-end latency, HUD feedback and pitch/minimap fusion remain unverified.

@@ -1,0 +1,177 @@
+{
+  "updated_local_date": "2026-11-09",
+  "timezone": "Asia/Saigon",
+  "working_branch": "work/pc-hud-shadow-20261109",
+  "source_pc_commit": "324b9e9dfa7f4a821e16e33c3f36d0838f234e5b",
+  "source_colab_commit": "70d57ce9c50e223ae14918be8a362bd0b720618d",
+  "architecture": {
+    "capture": "Android screen over USB/scrcpy",
+    "inference_tracking_geometry": "PC CPU/GPU",
+    "android_role": "HUD receiver/renderer only",
+    "game_input_generation": false
+  },
+  "models": {
+    "field320_new": {
+      "sha256": "5b7e8db28c7a98d8a2aa8383dfd5334b181244a5e7909d92df5b6ad68adae02a",
+      "ball_top1_frozen38": 11,
+      "status": "research actor candidate; not accepted ball replacement"
+    },
+    "field640_source": {
+      "sha256": "3d4119b1247849a9ecc92ee31498b78b0f9e6ddd6815fc8485db2c2c1abc47c6",
+      "ball_top1_frozen38": 25,
+      "status": "retain existing ball comparison baseline"
+    },
+    "pitch32_new": {
+      "sha256": "56e988423891528f587e0cf5256b1d4406287f7823d997c370ebc1dcb3e9f3c1",
+      "status": "reject geometry deployment; pose AP zero"
+    },
+    "minimap320_new": {
+      "sha256": "160e092d54500fe11dfae6f632db7bdca0d2b610ac102d19e0f467c62314481d",
+      "status": "structurally valid; move trial inference to PC"
+    }
+  },
+  "current_step": "Beginner PC ZIP built and saved; Windows CPU installer smoke passed; user PC/phone setup pending",
+  "completed_this_session": [
+    "PC-only launcher/service; Android ONNX/MediaProjection code archived outside app source set",
+    "current four YAML schemas verified and fingerprinted",
+    "93 train + 10 validation pitch32 label files checked",
+    "12-file pitch18 sample checked separately",
+    "pitch32 model tested on current 10 original validation exports",
+    "shadow proposal + calibrated geometry module and observed/predicted/lost separation",
+    "Windows launcher/runbook; strict scrcpy title; tactics disabled",
+    "73 PC tests passed; 213 data-tool tests completed (7 optional training tests skipped)",
+    "38-frame shadow pilot and one bounded UI-filter correction; no accuracy claim"
+  ],
+  "not_verified": [
+    "shadow precision/recall and ball-shadow association",
+    "metric 3D/camera/light calibration",
+    "persistent player identity and minimap fusion in PC runtime",
+    "independent match",
+    "native Windows ORT CPU/GPU runtime",
+    "physical USB delay, capture alignment, HUD feedback and game FPS"
+  ],
+  "next_actions": [
+    "label separate ball/shadow/occluded observations on aerial clips with timestamps; evaluate on held-out clip",
+    "verify 32 vs 18 semantic pitch diagrams before any merge or training change",
+    "small-set pitch learning canary before another broad training run",
+    "Windows/phone measurement with HUD off/on and model/provider hashes",
+    "wire PC minimap branch only after viewport contract is measured"
+  ],
+  "local_tests": {
+    "pc": {
+      "run": 75,
+      "passed": 75
+    },
+    "data_tools": {
+      "run": 213,
+      "passed": 206,
+      "skipped": 7,
+      "skip_reason": "optional PyTorch training dependencies absent"
+    },
+    "android_ci": {
+      "run_id": 42588368208,
+      "status": "success",
+      "implementation_commit": "741808f8bc6beab598c024c4ab888550cfdf3e0c",
+      "jvm_tests": 48,
+      "jvm_failures": 0,
+      "lint_errors": 0,
+      "lint_warnings": 15,
+      "package_identity_verified": true,
+      "apk_signature_verified": true
+    },
+    "physical_windows_android": "not run",
+    "windows_setup_ci": {
+      "run_id": 42590185243,
+      "job_id": 129069639465,
+      "status": "success",
+      "scope": "real Windows one-time venv/pip installer and native CPU dependency import; no private-model inference or USB capture"
+    }
+  },
+  "pitch32_audit": {
+    "train_label_files": 93,
+    "valid_label_files": 10,
+    "format_errors": 0,
+    "v2_validation_points": 92,
+    "pck5_correct": 0,
+    "pck10_correct": 0,
+    "median_error_px_at_640": 191.86228663164917,
+    "semantic_id_mapping": "not yet independently verified"
+  },
+  "shadow_pilot": {
+    "status": "research_shadow_proposals_only",
+    "model_sha256": "3d4119b1247849a9ecc92ee31498b78b0f9e6ddd6815fc8485db2c2c1abc47c6",
+    "source_detections_sha256": "60d49bc6730208c1b1a97954b1a0b69ea03e9051b25864225af02e01a435decc",
+    "source_clips_sha256": "34431ed63fcf5dfd5a329e92b6569350805b81b15aebb688b96f103016252783",
+    "frames": 38,
+    "frames_with_detector_seed": 33,
+    "frames_with_shadow_proposals": 5,
+    "total_shadow_proposals": 8,
+    "seeds_changed": 0,
+    "shadow_accuracy": null,
+    "tracking_improvement": null,
+    "independent_match": false,
+    "calibrated_3d": false,
+    "incremental_ms_median": 5.51884499964217,
+    "incremental_ms_p95": 8.097557999644778,
+    "timing_scope": "Local OpenCV CPU, 2 threads, proposal stage only; no inference/USB/render",
+    "visual_review": "Remaining proposals include player/HUD artifacts; default off, not accepted as a reliable shadow detector."
+  },
+  "implementation_commit": "30a879d8fd4e3dd4e80cfc860b57ebf6d5498501",
+  "private_qc_archive": {
+    "filename": "efootphy_pc_shadow_qc_20261109.zip",
+    "sha256": "5242bd15c301bf0b139796a6848c40bce60dcb984b765bba684fd30d32fe7020",
+    "saved": "user ChatGPT files; source assets excluded from GitHub"
+  },
+  "collaboration_note": "Extra Drive handover folder was NOT created: automatic approval review failed because of usage limit. Existing GitHub handover remains canonical.",
+  "android_identity": {
+    "legacy_application_id": "com.example.minimap",
+    "pc_hud_application_id": "com.example.minimap.pchud",
+    "code_namespace": "com.example.minimap",
+    "launcher": "com.example.minimap.ui.PcHudActivity",
+    "version_code": 3,
+    "version_name": "0.2.1-pc-hud",
+    "label": "eFootPhy PC HUD"
+  },
+  "installation_issue": {
+    "user_error": "INSTALL_FAILED_UPDATE_INCOMPATIBLE",
+    "cause": "Existing legacy package and previous PC HUD APK have different signing certificates",
+    "resolution": "Install separate PC HUD package beside legacy; preserve old application/data; stop old HUD to avoid port conflict",
+    "status": "Separate-package APK built and verified; user device install confirmation still pending"
+  },
+  "previous_apk": {
+    "file": "efootphy-pc-hud-30a879d.apk",
+    "bytes": 2189116,
+    "sha256": "33e353700a73e6d05adcc8ef44a0f96ae7b8ffaa9140fda9b164eff1652f4fdf",
+    "artifact_id": 13658387379,
+    "contains_native_onnx_libraries": false,
+    "physical_install_tested": false
+  },
+  "apk": {
+    "file": "efootphy-pc-hud-v0.2.1.apk",
+    "bytes": 2189116,
+    "sha256": "bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44",
+    "artifact_id": 13660087365,
+    "application_id": "com.example.minimap.pchud",
+    "launcher": "com.example.minimap.ui.PcHudActivity",
+    "certificate_sha256": "c14c74c1e3264ce9992e0e3da0466ce4f67a2611cd22e28d944e37ac0edc4ac1",
+    "signature_verified_in_ci": true,
+    "reported_apk_sha256": "bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44",
+    "physical_install_tested": false
+  },
+  "android_build_commit": "741808f8bc6beab598c024c4ab888550cfdf3e0c",
+  "beginner_pc_bundle": {
+    "filename": "efootphy_PC_START_v0.2.1.zip",
+    "status": "built, verified and saved in user files",
+    "model_sha256": "3d4119b1247849a9ecc92ee31498b78b0f9e6ddd6815fc8485db2c2c1abc47c6",
+    "apk_sha256": "bde85a67ec0d1a641fa0a03d9c44fd436add72ad8f8cc33abccf94075426fe44",
+    "inference_provider": "CPUExecutionProvider",
+    "shadow_evidence_default": false,
+    "new_training": false,
+    "guide": "docs/handover/BEGINNER_PC.vi.md",
+    "source_commit": "ec67a58588fb8deb235d7854ee62bacb7620348f",
+    "bytes": 11846639,
+    "entries": 14,
+    "sha256": "2c061a3d88432c891afc4d415f8f45ea47bfe63a0fdc7f5d77a73ce48cf21e33",
+    "windows_installer_smoke": "passed; run 42590185243"
+  }
+}

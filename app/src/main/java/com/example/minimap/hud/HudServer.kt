@@ -16,6 +16,7 @@ class HudServer(
     private var serverSocket: ServerSocket? = null
     private var serverThread: Thread? = null
     private val isRunning = AtomicBoolean(false)
+    @Volatile private var activeClient: Socket? = null
 
     fun start() {
         if (isRunning.getAndSet(true)) return
@@ -46,6 +47,7 @@ class HudServer(
     }
 
     private fun handleClient(socket: Socket) {
+        activeClient = socket
         onConnectionChanged(true)
         Log.d("HudServer", "PC Client connected from ${socket.remoteSocketAddress}")
         try {
@@ -70,6 +72,7 @@ class HudServer(
         } catch (e: Exception) {
             Log.d("HudServer", "Client disconnected: ${e.message}")
         } finally {
+            if (activeClient === socket) activeClient = null
             onConnectionChanged(false)
             runCatching { socket.close() }
         }
@@ -78,6 +81,8 @@ class HudServer(
     fun stop() {
         if (!isRunning.getAndSet(false)) return
         runCatching { serverSocket?.close() }
+        runCatching { activeClient?.close() }
+        activeClient = null
         serverSocket = null
         serverThread?.interrupt()
         serverThread = null

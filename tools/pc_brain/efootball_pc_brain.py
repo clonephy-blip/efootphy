@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
 efootball_pc_brain.py
-Native Windows PC Co-Processor for eFootball Mobile (Method B).
-Ultra-low latency real-time screen analysis, YOLO11n AI detection, team color K-Means clustering,
-tactical pass suggestions, and normalized coordinate streaming to the Android AR HUD.
+Windows PC screen analysis and normalized observations for the Android HUD.
+Research runtime: hardware latency, tracking accuracy and 3D remain separate QC gates.
 """
 
 import ctypes
@@ -22,15 +21,17 @@ import numpy as np
 import onnxruntime as ort
 from PIL import ImageGrab
 try:
-    from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model, validate_field_onnx_io
+    from tools.pc_brain.runtime_safety import is_known_team, resolve_field_model, validate_field_onnx_io, select_execution_providers
     from tools.pc_brain.transport_rtt import AckRttMeter
     from tools.pc_brain.field_postprocess import decode_field_detections, cluster_kit_colors
+    from tools.pc_brain.ball_shadow import find_shadow_candidates
 except ModuleNotFoundError as exc:
     if exc.name not in ("tools", "tools.pc_brain"):
         raise
-    from runtime_safety import is_known_team, resolve_field_model, validate_field_onnx_io
+    from runtime_safety import is_known_team, resolve_field_model, validate_field_onnx_io, select_execution_providers
     from transport_rtt import AckRttMeter
     from field_postprocess import decode_field_detections, cluster_kit_colors
+    from ball_shadow import find_shadow_candidates
 
 # Class indices from YOLO11n field model
 CLASS_BALL = 0
@@ -43,7 +44,7 @@ CLASS_REFEREE = 6
 
 
 class WindowCapture:
-    """High-speed screen grabber targeting the scrcpy game window or primary monitor."""
+    """Capture only the explicitly named scrcpy window; no desktop fallback."""
 
     def __init__(self, window_title="eFootball-Screen"):
         self.window_title = window_title
@@ -59,13 +60,6 @@ class WindowCapture:
         self.user32.GetClientRect.restype = ctypes.wintypes.BOOL
         self.user32.ClientToScreen.argtypes = (ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.POINT))
         self.user32.ClientToScreen.restype = ctypes.wintypes.BOOL
-        self.user32.GetWindowTextLengthW.argtypes = (ctypes.wintypes.HWND,)
-        self.user32.GetWindowTextLengthW.restype = ctypes.c_int
-        self.user32.GetWindowTextW.argtypes = (ctypes.wintypes.HWND, ctypes.wintypes.LPWSTR, ctypes.c_int)
-        self.user32.GetWindowTextW.restype = ctypes.c_int
-        self._enum_callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-        self.user32.EnumWindows.argtypes = (self._enum_callback_type, ctypes.wintypes.LPARAM)
-        self.user32.EnumWindows.restype = ctypes.wintypes.BOOL
         self.last_warn_time = 0.0
         try:
             self.sct = mss.mss()
@@ -77,22 +71,7 @@ class WindowCapture:
         if hwnd and self.user32.IsWindow(hwnd) and self.user32.IsWindowVisible(hwnd) and not self.user32.IsIconic(hwnd):
             return hwnd
 
-        # Fallback: search all visible windows for eFootball or scrcpy
-        matches = []
-        def enum_cb(h, _):
-            if self.user32.IsWindowVisible(h) and not self.user32.IsIconic(h):
-                length = self.user32.GetWindowTextLengthW(h)
-                if length > 0:
-                    buff = ctypes.create_unicode_buffer(length + 1)
-                    self.user32.GetWindowTextW(h, buff, length + 1)
-                    title = buff.value
-                    if "efootball" in title.lower() or "scrcpy" in title.lower():
-                        matches.append((h, title))
-            return True
-
-        WNDENUMPROC = self._enum_callback_type
-        self.user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
-        return matches[0][0] if matches else None
+        return None
 
     def get_window_rect(self):
         hwnd = self.find_target_window()
@@ -297,11 +276,14 @@ class EFootballPcBrain:
         self.packet_sequence = 0
         self.transport_meter = AckRttMeter()
         self.prev_ball = None
-        self.prev_ball_time = time.time()
+        self.prev_ball_time = time.perf_counter()
+        self.last_ball_observed_s = float('-inf')
         self.ball_persistence = 0
         self.last_known_ball = None
         self.last_ball_v = (0.0, 0.0)
         self.last_log_time = 0.0
+        self.shadow_enabled = os.environ.get('EFOOTPHY_SHADOW_EVIDENCE', '0') == '1'
+        self.latest_shadow_candidates = []
         self._init_model()
 
     def _init_model(self):
@@ -311,10 +293,15 @@ class EFootballPcBrain:
         opts.inter_op_num_threads = 1
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        self.sess = ort.InferenceSession(str(self.model_path), sess_options=opts)
+        providers = select_execution_providers(
+            os.environ.get('EFOOTPHY_EXECUTION_PROVIDER', 'auto'), ort.get_available_providers())
+        if 'DmlExecutionProvider' in providers:
+            opts.enable_mem_pattern = False
+        self.sess = ort.InferenceSession(str(self.model_path), sess_options=opts, providers=providers)
         self.input_size = validate_field_onnx_io(self.sess.get_inputs(), self.sess.get_outputs())
         self.input_name = self.sess.get_inputs()[0].name
         print(f"[PC Brain] Field ONNX validated: {self.input_size}x{self.input_size}, 7 classes; input: {self.input_name}")
+        print(f"[PC Brain] Execution providers: {self.sess.get_providers()}; shadow proposals: {self.shadow_enabled}")
 
     def connect_socket(self):
         if self.sock is not None:
@@ -384,9 +371,9 @@ class EFootballPcBrain:
         tensor = np.transpose(rgb, (2, 0, 1)).astype(np.float32) / 255.0
         tensor = np.expand_dims(tensor, axis=0)
 
-        t0 = time.time()
+        t0 = time.perf_counter()
         preds = self.sess.run(None, {self.input_name: tensor})[0]  # (1,11,2100) or (1,11,8400)
-        infer_time_ms = (time.time() - t0) * 1000.0
+        infer_time_ms = (time.perf_counter() - t0) * 1000.0
 
         # Decode all seven classes with *class-local* NMS. The ball channel is
         # evaluated independently of non-ball argmax so a player/cursor proposal
@@ -442,18 +429,21 @@ class EFootballPcBrain:
         # Process Ball & Trajectory
         ball_data = None
         ball_pos = None
+        ball_now = time.perf_counter()
+        self.latest_shadow_candidates = []
         if ball_box is not None:
             bx = (ball_box[0] + ball_box[2]) / 2.0
             by = (ball_box[1] + ball_box[3]) / 2.0
             ball_pos = (bx, by)
-            now = time.time()
-            dt = max(now - self.prev_ball_time, 0.001)
+            now = ball_now
+            dt = now - self.last_ball_observed_s
             vx, vy = 0.0, 0.0
-            if self.prev_ball is not None:
+            if self.prev_ball is not None and 0 < dt <= .2:
                 vx = (bx - self.prev_ball[0]) / dt
                 vy = (by - self.prev_ball[1]) / dt
             self.prev_ball = (bx, by)
             self.prev_ball_time = now
+            self.last_ball_observed_s = now
             self.last_known_ball = (bx, by)
             self.last_ball_v = (vx, vy)
             self.ball_persistence = 5
@@ -461,10 +451,11 @@ class EFootballPcBrain:
                 "x": float(bx / orig_w),
                 "y": float(by / orig_h),
                 "vx": float(vx / orig_w),
-                "vy": float(vy / orig_h)
+                "vy": float(vy / orig_h),
+                "state": "OBSERVED"
             }
-        elif self.ball_persistence > 0 and self.last_known_ball is not None:
-            now = time.time()
+        elif self.ball_persistence > 0 and self.last_known_ball is not None and 0 <= ball_now-self.last_ball_observed_s <= .15:
+            now = ball_now
             dt = min(now - self.prev_ball_time, 0.2)
             self.ball_persistence -= 1
             bx = self.last_known_ball[0] + self.last_ball_v[0] * dt * 0.9
@@ -476,12 +467,30 @@ class EFootballPcBrain:
                 "x": float(bx / orig_w),
                 "y": float(by / orig_h),
                 "vx": float(self.last_ball_v[0] / orig_w * 0.9),
-                "vy": float(self.last_ball_v[1] / orig_h * 0.9)
+                "vy": float(self.last_ball_v[1] / orig_h * 0.9),
+                "state": "PREDICTED"
             }
+        else:
+            self.prev_ball = None
+            self.last_known_ball = None
+            self.ball_persistence = 0
 
-        # Tactical Pass Lines
-        # Hide pass hints if ball position is only an unconfirmed extrapolation.
-        _, pass_lines = TacticalPassAnalyzer.analyze(raw_players, ball_pos if ball_box is not None else None, orig_w, orig_h)
+        if ball_data is not None and not (0 <= ball_data['x'] <= 1 and 0 <= ball_data['y'] <= 1):
+            ball_data = None
+            ball_pos = None
+            self.ball_persistence = 0
+
+        if self.shadow_enabled and ball_pos is not None:
+            radius = 4. if ball_box is None else max(2.,min(20.,min(ball_box[2]-ball_box[0],ball_box[3]-ball_box[1])*.5))
+            proposals = find_shadow_candidates(frame_bgr, ball_pos, radius,
+                player_boxes=player_boxes+gk_boxes+ref_boxes)
+            self.latest_shadow_candidates = [
+                {'x':p.xy_px[0]/orig_w,'y':p.xy_px[1]/orig_h,'quality':p.quality,
+                 'kind':'SHADOW_CANDIDATE'} for p in proposals]
+
+        # Screen-space proximity is not proof of possession for an aerial ball.
+        # Keep tactics disabled until possession and geometry QC pass.
+        pass_lines = []
 
         # Convert players to normalized coordinates [0.0, 1.0] for the phone HUD
         norm_players = []
@@ -518,7 +527,7 @@ class EFootballPcBrain:
         current_fps = 30.0
 
         while True:
-            loop_t0 = time.time()
+            loop_t0 = time.perf_counter()
 
             # Grab screen frame
             frame_bgr, is_window = self.cap.grab()
@@ -526,6 +535,8 @@ class EFootballPcBrain:
                 self.prev_ball = None
                 self.last_known_ball = None
                 self.ball_persistence = 0
+                self.last_ball_observed_s = float('-inf')
+                self.latest_shadow_candidates = []
                 self.kit_classifier.team0_center = None
                 self.kit_classifier.team1_center = None
                 self.send_packet({"timestamp": int(time.time() * 1000), "fps": 0.0,
@@ -544,7 +555,7 @@ class EFootballPcBrain:
                 fps_counter = 0
                 fps_start = now
 
-            total_lat = (time.time() - loop_t0) * 1000.0
+            total_lat = (time.perf_counter() - loop_t0) * 1000.0
 
             # Periodic Terminal Diagnostics (every 1 second)
             if now - self.last_log_time >= 1.0:
@@ -552,7 +563,7 @@ class EFootballPcBrain:
                 team_a = sum(1 for p in players if p["team"] == 0)
                 team_b = sum(1 for p in players if p["team"] == 1)
                 ball_txt = f"({ball_data['x']:.2f}, {ball_data['y']:.2f})" if ball_data else "searching"
-                target_txt = "eFootball-Screen" if is_window else "Desktop (fallback)"
+                target_txt = "eFootball-Screen" if is_window else "UNAVAILABLE"
                 conn_txt = "CONNECTED" if self.sock else "waiting phone..."
                 transport_txt = f"{self.transport_meter.last_rtt_ms:.1f}ms" if self.transport_meter.last_rtt_ms is not None else "--"
                 print(f"[{conn_txt}] Src: {target_txt} | FPS: {current_fps:4.1f} | Infer: {infer_ms:4.1f}ms | USB RTT: {transport_txt} | Players: {len(players):2d} (A:{team_a:2d}, B:{team_b:2d}) | Ball: {ball_txt} | Passes: {len(pass_lines):2d}")
@@ -567,11 +578,16 @@ class EFootballPcBrain:
                 "players": players,
                 "pass_lines": pass_lines
             }
+            packet.update(schema_version=2, frame_width=frame_bgr.shape[1],
+                          frame_height=frame_bgr.shape[0], source_age_ms=total_lat,
+                          shadow_candidates=self.latest_shadow_candidates,
+                          geometry_status='UNCALIBRATED', ball_height_m=None,
+                          tactics_status='DISABLED_PENDING_QC')
 
             self.send_packet(packet)
 
             # Minimal sleep to yield CPU
-            elapsed = time.time() - loop_t0
+            elapsed = time.perf_counter() - loop_t0
             sleep_needed = max(0.010 - elapsed, 0.001)
             time.sleep(sleep_needed)
 

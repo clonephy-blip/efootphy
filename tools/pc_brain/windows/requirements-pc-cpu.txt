@@ -1,0 +1,6 @@
+# Fixed CPU setup for the beginner Windows bundle; no Android inference.
+numpy==2.3.5
+opencv-python-headless==5.0.0.93
+mss==10.1.0
+Pillow==12.3.0
+onnxruntime==1.22.0

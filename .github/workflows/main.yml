@@ -14,6 +14,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-setup:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Exercise beginner CPU setup on Windows
+        shell: cmd
+        run: |
+          copy tools\pc_brain\windows\01_CAI_DAT_PC.bat .
+          copy tools\pc_brain\windows\requirements-pc-cpu.txt .
+          call 01_CAI_DAT_PC.bat --no-pause
+      - name: Native Windows dependency smoke check
+        shell: cmd
+        run: .venv\Scripts\python.exe tools\pc_brain\windows\smoke_cpu.py
+
   data-tools:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -24,13 +43,13 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: tools/vision_qc/requirements-qc.txt
-      - run: python -m pip install -r tools/vision_qc/requirements-qc.txt
+      - run: python -m pip install -r tools/vision_qc/requirements-qc.txt -r tools/vision_qc/requirements-colab-qc.txt
       - name: Dataset, normalization and release-gate regression tests
         run: python -W error::ResourceWarning -m unittest discover -s tools/vision_qc -t . -p 'test_*.py' -v
-      - name: PC Brain dependency-free safety tests
-        run: python -m unittest tools.pc_brain.test_runtime_safety tools.pc_brain.test_transport_rtt tools.pc_brain.test_field_postprocess tools.pc_brain.test_benchmark_field_video tools.pc_brain.test_compare_field_models tools.pc_brain.test_compare_saved_checkpoints -v
+      - name: PC runtime, transport and shadow tests without Windows or ORT
+        run: python -m unittest discover -s tools/pc_brain -t . -p 'test_*.py' -v
       - name: Compile PC Brain entrypoint without importing Windows/ONNX dependencies
-        run: python -m py_compile tools/pc_brain/efootball_pc_brain.py tools/pc_brain/field_postprocess.py tools/pc_brain/runtime_safety.py tools/pc_brain/transport_rtt.py tools/pc_brain/benchmark_field_video.py tools/pc_brain/compare_field_models.py tools/pc_brain/compare_saved_checkpoints.py
+        run: python -m compileall -q tools/pc_brain
 
   android:
     runs-on: ubuntu-24.04
@@ -61,6 +80,21 @@ jobs:
           fi
       - name: Core regression tests, Android lint and APK
         run: gradle :vision-core:test :app:lintDebug :app:assembleDebug --stacktrace
+      - name: Verify standalone PC HUD identity and APK signing
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          mkdir -p app/build/reports
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > app/build/reports/apk-identity.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk" > app/build/reports/apk-signing.txt
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          text = Path('app/build/reports/apk-identity.txt').read_text()
+          assert re.search(r"package: name='com.example.minimap.pchud' versionCode='3'", text), text
+          assert "launchable-activity: name='com.example.minimap.ui.PcHudActivity'" in text, text
+          print('Verified separate PC HUD package and unchanged Activity namespace')
+          PY
+          sha256sum "$apk" > app/build/reports/apk-sha256.txt
       - name: Test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -70,9 +104,11 @@ jobs:
             vision-core/build/reports/tests/test/
             vision-core/build/test-results/test/
             app/build/reports/lint-results-debug.*
+            app/build/reports/apk-*.txt
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: efootphy-research-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
