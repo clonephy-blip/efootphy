@@ -214,6 +214,17 @@ class ColabMinimapBundleTest(unittest.TestCase):
             exec(TRAIN, self.ns)
         self.assertIsNone(self.ns['minimap_onnx_path'])
 
+    def test_restart_clears_old_export_even_when_drive_mount_fails(self):
+        colab = types.ModuleType('google.colab'); colab.drive = Mock()
+        colab.drive.mount.side_effect = RuntimeError('mount failed')
+        self.ns['minimap_onnx_path'] = self.root / 'previous-run.onnx'
+        self.ns['minimap_bundle_path'] = self.root / 'previous-run.zip'
+        start_cell = next(c for c in CELLS if "drive.mount('/content/drive')" in c)
+        with patch.dict('sys.modules', {'google.colab':colab}), self.assertRaises(RuntimeError):
+            exec(start_cell, self.ns)
+        self.assertIsNone(self.ns['minimap_onnx_path'])
+        self.assertIsNone(self.ns['minimap_bundle_path'])
+
     def test_packaging_without_this_run_export_does_not_download(self):
         colab = types.ModuleType('google.colab'); colab.files = Mock()
         with patch.dict('sys.modules', {'google.colab':colab}), self.assertRaises(RuntimeError):
