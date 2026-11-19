@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "auth": "oauth2",
+  "gpu": "T4",
+  "project_root": "/content/drive/MyDrive/efootphy_V2",
+  "output_root": "/content/drive/MyDrive/efootphy_colab_runs",
+  "max_minutes": 45,
+  "download_limit_mb": 200,
+  "source_fps": 59.7,
+  "requirements": ["ultralytics==8.4.208", "opencv-python-headless", "scipy", "PyYAML", "Pillow", "onnx", "onnxruntime"],
+  "default_tasks": ["inventory", "baseline"],
+  "tasks": [
+    {"name": "inventory", "kind": "inventory"},
+    {"name": "baseline", "kind": "benchmark", "script": "run_optimized_v5.py", "video": "09_BENCHMARK_AND_QC/VIDEO_TRACKING_TEST_01/MATCH_01_PART_007/TRACKING_PREVIEW_30S.mp4", "field_model": "02_MODELS/field_player_v2_960_best.pt", "ball_model": "02_MODELS/ball_roi_v2_best.pt", "pitch_model": "02_MODELS/pitch_pose_33kp_best.pt", "max_frames": 300},
+    {"name": "ball", "kind": "train", "prepare": "ball_v2", "task": "detect", "weights": "02_MODELS/ball_roi_v2_best.pt", "epochs": 1, "imgsz": 320, "batch": 8, "expected_names": ["ball"]},
+    {"name": "actors", "kind": "train", "prepare": "actors_v2", "task": "detect", "weights": "02_MODELS/field_player_v2_960_best.pt", "epochs": 1, "imgsz": 960, "batch": 4, "expected_names": ["ball", "goal_keeper", "player", "referee"]},
+    {"name": "candidate", "kind": "benchmark", "script": "run_optimized_v5.py", "video": "09_BENCHMARK_AND_QC/VIDEO_TRACKING_TEST_01/MATCH_01_PART_007/TRACKING_PREVIEW_30S.mp4", "field_model": "@actors", "ball_model": "@ball", "pitch_model": "02_MODELS/pitch_pose_33kp_best.pt", "max_frames": 300},
+    {"name": "export-ball", "kind": "export", "weights": "@ball", "imgsz": 320},
+    {"name": "export-actors", "kind": "export", "weights": "@actors", "imgsz": 960},
+    {"name": "pitch", "kind": "train", "task": "pose", "data": "EDIT_ME/pitch-half18/data.yaml", "weights": "02_MODELS/pitch_pose_33kp_best.pt", "epochs": 1, "imgsz": 640, "batch": 4, "kpt_shape": [18, 3]},
+    {"name": "minimap", "kind": "train", "task": "detect", "data": "EDIT_ME/minimap/data.yaml", "weights": "EDIT_ME/minimap-pretrained.pt", "epochs": 1, "imgsz": 320, "batch": 8, "expected_names": ["ball", "controlled", "dot"]}
+  ]
+}

@@ -100,3 +100,19 @@ Confirmed original Field640 ONNX input `[1,3,640,640]`, output `[1,11,8400]`. Bu
 ZIP filename `efootphy_PC_START_v0.2.1.zip`, 11,846,639 bytes, 14 entries, SHA-256 `2c061a3d88432c891afc4d415f8f45ea47bfe63a0fdc7f5d77a73ce48cf21e33`. Saved as a separate private user file. Beginner receives the ZIP plus click-by-click instructions; no custom model path needed. Bundle has `bundle_manifest.json` with hashes of all files. It reuses the already built/signed APK and existing model; no new checkpoint.
 
 **Next interaction:** confirm one-time setup shows `DA CAI XONG`, mirrored gameplay appears, then `CONNECTED TO PHONE HUD`. On failure obtain the exact first error and the actual PC hardware before changing GPU dependencies. GPU acceleration, model/USB end-to-end latency, HUD feedback and pitch/minimap fusion remain unverified.
+
+
+
+## 2026-11-19 — Colab CLI orchestration for Antigravity
+
+The user requested full use of googlecolab/google-colab-cli for the Efootphy training workflow. Added a controller and remote worker, a bounded pilot recipe, setup script, Vietnamese runbook and Antigravity workflow. Base is the PC integration branch at 229810be03aacc40538fcd04e3db359dd01b3a96. The user workspace now includes V3/V5 files outside GitHub. These were inspected read-only to derive the adapter contracts.
+
+The controller owns named Colab sessions with isolated CLI metadata. It supports plan, prepare, run, status, collect, stop and checkpoint resume. It waits for human Google/Drive authorization when required. Tasks reuse V2 ball/actor data preparation, use the existing dataset auditor, stage private data in VM scratch, and save checkpoints/results to unique persistent run directories. A baseline V5 replay and candidate replay use the same configured video. Model inputs and prepared datasets get hashes. The archive is checked member-by-member, with large remote-only outputs listed explicitly. Completed steps are sealed before resume. Setup, task and transfer failures have cleanup paths for owned sessions.
+
+The existing Drive master pipeline catches some exceptions and still prints completion, and Colab exec can exit 0 when remote Python has failed. The new runner verifies step receipts, checkpoint files and the job archive before accepting completion. ONNX exports are FP32 research artifacts with graph/I/O checks. Numerical export parity, independent-match accuracy and physical PC/phone latency remain pending.
+
+Validation actually run on Linux with Python 3.12: `python3 -m unittest tools.colab_pipeline.test_pipeline -v` — 30 tests passed. Tests include real worker subprocesses with a synthetic torch module, timeout termination, interrupted-result recovery behavior, successful-step integrity, mock training retry and concurrent local locks. `python3 -m compileall -q tools/colab_pipeline` and `bash -n tools/colab_pipeline/setup.sh` passed. Whitespace checks passed. The google-colab-cli 0.8.0 package was installed in a temporary local venv and actual global/new/exec/run help inspected. The default and seven-task plans both executed locally with zero cloud calls.
+
+No new dataset/model hash exists because no GPU training was executed in this development session. Authenticated Colab allocation, Drive mount, live GPU inference, export parity and Android/USB performance are unverified. Private datasets, source screenshots, model binaries, Drive IDs and signed URLs are excluded from this change. Credentials and result directories are ignored by Git.
+
+Next reproducible action from the user terminal: follow docs/COLAB_AUTOMATION.vi.md, authenticate with `colab sessions`, inspect `python -m tools.colab_pipeline plan`, and run the configured inventory/baseline pilot. Use the Antigravity workflow to select the next bounded experiment from the collected summary. Research jobs record release_eligible=false.

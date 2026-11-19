@@ -1,7 +1,7 @@
 {
-  "updated_local_date": "2026-11-09",
+  "updated_local_date": "2026-11-19",
   "timezone": "Asia/Saigon",
-  "working_branch": "work/pc-hud-shadow-20261109",
+  "working_branch": "feat/colab-cli-automation-20261119",
   "source_pc_commit": "324b9e9dfa7f4a821e16e33c3f36d0838f234e5b",
   "source_colab_commit": "70d57ce9c50e223ae14918be8a362bd0b720618d",
   "architecture": {
@@ -30,7 +30,7 @@
       "status": "structurally valid; move trial inference to PC"
     }
   },
-  "current_step": "Beginner PC ZIP built and saved; Windows CPU installer smoke passed; user PC/phone setup pending",
+  "current_step": "Colab CLI orchestration implemented and tested locally. Account authentication, Drive consent and the first cloud pilot are pending.",
   "completed_this_session": [
     "PC-only launcher/service; Android ONNX/MediaProjection code archived outside app source set",
     "current four YAML schemas verified and fingerprinted",
@@ -51,11 +51,11 @@
     "physical USB delay, capture alignment, HUD feedback and game FPS"
   ],
   "next_actions": [
-    "label separate ball/shadow/occluded observations on aerial clips with timestamps; evaluate on held-out clip",
-    "verify 32 vs 18 semantic pitch diagrams before any merge or training change",
-    "small-set pitch learning canary before another broad training run",
-    "Windows/phone measurement with HUD off/on and model/provider hashes",
-    "wire PC minimap branch only after viewport contract is measured"
+    "Authenticate Colab CLI from the user terminal, mount Drive, then run inventory and the 300-frame V5 baseline.",
+    "Run a one-epoch ball/actors canary followed by the matched candidate replay and isolated ONNX exports.",
+    "Resolve current pose/minimap dataset YAML paths and confirm class/keypoint semantics before selecting those tasks.",
+    "Review candidate results against actual ball annotations and preserve the independent-match test set.",
+    "Measure PC/USB/Android frame age and game FPS on physical hardware."
   ],
   "local_tests": {
     "pc": {
@@ -85,6 +85,11 @@
       "job_id": 129069639465,
       "status": "success",
       "scope": "real Windows one-time venv/pip installer and native CPU dependency import; no private-model inference or USB capture"
+    },
+    "colab_pipeline": {
+      "run": 30,
+      "passed": 30,
+      "scope": "synthetic controller lifecycle, cross-process worker, data staging and archive integrity. No cloud session."
     }
   },
   "pitch32_audit": {
@@ -173,5 +178,30 @@
     "entries": 14,
     "sha256": "2c061a3d88432c891afc4d415f8f45ea47bfe63a0fdc7f5d77a73ce48cf21e33",
     "windows_installer_smoke": "passed; run 42590185243"
+  },
+  "colab_automation": {
+    "branch": "feat/colab-cli-automation-20261119",
+    "integration_base_commit": "229810be03aacc40538fcd04e3db359dd01b3a96",
+    "entrypoint": "python -m tools.colab_pipeline",
+    "configuration": "tools/colab_pipeline/pilot.example.json",
+    "guide": "docs/COLAB_AUTOMATION.vi.md",
+    "antigravity_workflow": ".agent/workflows/efootphy-colab.md",
+    "cli_version_installed": "0.8.0",
+    "upstream_commit_reviewed": "aa01a39019ed6570c7496ec8ec5330daf1730b33",
+    "source_workspace": "User Drive V2 workspace including V3 training preparation and V5 replay runner",
+    "synthetic_tests_passed": 30,
+    "real_cli_help_verified": true,
+    "cloud_authentication_verified": false,
+    "gpu_training_executed": false,
+    "physical_device_measured": false,
+    "default_gpu": "T4",
+    "default_tasks": [
+      "inventory",
+      "baseline"
+    ],
+    "training_canary_epochs": 1,
+    "worker_budget_minutes": 45,
+    "private_assets_in_git": false,
+    "release_eligible": false
   }
 }

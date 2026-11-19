@@ -20,3 +20,8 @@ debug_*.jpg
 test_*.png
 test_*.mkv
 sample.*
+
+.efootphy-colab/
+.venv-colab/
+.colab.private.json
+
